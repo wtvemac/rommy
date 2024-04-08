@@ -21,11 +21,13 @@ use Carp;
 
 my $g_fileseek;
 my $g_doprint= 0;
+my $g_addblankreloctable = 1; # EMAC: testing for the UTV. Imagesize includes a blank .reloc table
 my $g_savedir;
-my $g_use_wince3_compression;
+my $g_use_wince3_compression=1; # EMAC: this is used as a flag for the rva in PE files. Always turn this on for UTV.
 my %seen_extensions;
 my %g_xipchaininfo;
 my $g_verbose;
+my $g_list;
 
 #use XdaDevelopers::CompressUtils;
 # this requires a patch to Win32::API, which can be found at
@@ -46,6 +48,7 @@ GetOptions(
     "d:s"=> \$g_savedir,
     "3"  => \$g_use_wince3_compression,
     "v"=> \$g_verbose,
+    "l"=> \$g_list,
 ) or die usage();
 
 sub usage {
@@ -67,7 +70,7 @@ my $xipblocks= XipBlock::FindXipBlocks($rom);
 
 # [0x00000000, 0x10078000], [0x00100000, 0x80000000], [0x00900000, 0x82040000], [0x015c0000, 0x82d00000], [0x01640000, 0x82d80000], [0x01940000, 0x83080000] 
 for my $xipblock ( @$xipblocks ) {
-    printf("romdump, %08lx %08lx\n", $xipblock->{ofs}, $xipblock->{base});
+    printf("romdump, 0x%08lx 0x%08lx\n", $xipblock->{ofs}, $xipblock->{base});
     $rom->setbase($xipblock->{ofs}, $xipblock->{base});
     $mem->setvbase($xipblock->{ofs}, $xipblock->{base});
     my $xip= XipBlock->new($rom, $mem, $xipblock->{base});
@@ -87,7 +90,10 @@ if (defined $g_savedir && length($g_savedir)>0) {
         $rom->setbase($xipblock->{ofs}, $xipblock->{base});
         $mem->setvbase($xipblock->{ofs}, $xipblock->{base});
         my $xipname= exists $g_xipchaininfo{$xipblock->{base}} ? "xip_".$g_xipchaininfo{$xipblock->{base}}{szName} : sprintf("xip_%02d", $xipindex);
-        $xipblock->{parsedxip}->SaveFiles($g_savedir, $xipname);
+
+        if(!$g_list) {
+            $xipblock->{parsedxip}->SaveFiles($g_savedir, $xipname);
+        }
 
         $xipindex++;
     }
@@ -134,11 +140,14 @@ sub ParseXipBlock {
     if ($rom->GetDword($self->{xipstart}+0x40) != 0x43454345) {
         die "ECEC signature not found\n";
     }
-    printf("xipblock %08x-?, hdr=%08x\n", $self->{xipstart}, $self->{romhdr}) if ($g_verbose);
 
     my $romhdrofs= $rom->GetDword($self->{xipstart}+0x44);
     $mem->vadd($self->{xipstart}+0x40, 8, "ECEC signature + romhdr ptr");
     my $romhdr= $self->{romhdr}= $self->ParseRomHdr($rom->GetVData($romhdrofs, 0x54));
+
+    printf("xipblock 0x%08x-?, hdr=0x%08x\n", $self->{xipstart}, $self->{romhdr}) if ($g_verbose);
+
+    $self->{o32sections}= {}; # EMAC: added for UTV copy entry info
 
     $mem->vadd($romhdrofs, 0x54, $romhdr->{desc});
     my $modlistofs= $romhdrofs+ 0x54;
@@ -168,7 +177,7 @@ sub ParseExtension {
     my $data= shift;
     my @fields= unpack("A24V5", $data);
     my @names= qw(name type pdata length reserved pNextExt);
-    my @fmt= qw(%s %08lx %08lx %08lx %08lx %08lx);
+    my @fmt= qw(%s 0x%08lx 0x%08lx 0x%08lx 0x%08lx 0x%08lx);
     return  {
         desc=>sprintf("extension: %s", join ", ", map { sprintf("%s:$fmt[$_]", $names[$_], $fields[$_]) } (0..$#names)),
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
@@ -199,7 +208,7 @@ sub ParseExtensions {
         if (!$first) {
             $self->{mem}->vadd($extptr, 44, $ext->{desc});
             $self->{mem}->vadd($ext->{pdata}, $ext->{length}, "data for extension %s: %s", $ext->{name},
-                join(",", map { sprintf("%08lx", $_); } unpack("V*", $self->{rom}->GetVData($ext->{pdata}, $ext->{length})))
+                join(",", map { sprintf("0x%08lx", $_); } unpack("V*", $self->{rom}->GetVData($ext->{pdata}, $ext->{length})))
             ) if ($ext->{pdata});
         }
 
@@ -216,7 +225,7 @@ sub SaveFiles {
     if (defined($savedir) && length($savedir)>0) {
         mkdir $savedir;
     }
-    $savedir .= "/$xipname";
+    $savedir .= "/";#$xipname";
     if ($savedir) {
         mkdir $savedir;
     }
@@ -227,11 +236,14 @@ sub SaveFiles {
     $self->SaveFile($_, $savedir) for (@{$self->{files}});
     print "saving modules to $savedir\n";
     $self->SaveModule($_, $savedir) for (@{$self->{modules}});
+    print "saving copy entries to $savedir\n"; # EMAC: added for the UTV
+    $self->SaveCopyEntry($_, $savedir) for (@{$self->{copylist}});
 }
 sub DumpInfo {
     my $self= shift;
     $self->DumpFilesAreas();
     $self->DumpModulesAreas();
+    $self->DumpCopyEntryAreas();
 
     $self->{mem}->vfillblanks($self->{rom}, $self->{romhdr}{physfirst}, $self->{romhdr}{physlast});
     #$self->{mem}->print();
@@ -243,16 +255,27 @@ sub filetimestring {
     my $win32ftime= $file->{ftTime_high}*(2**32)+$file->{ftTime_low};
 
     my $unixtime= int($win32ftime/10000000.0-11644473600);
-    #return sprintf("%08lX%08lX", $file->{ftTime_high}, $file->{ftTime_low});
+    #return sprintf("0x%08lx0x%08lx", $file->{ftTime_high}, $file->{ftTime_low});
     return POSIX::strftime("%Y-%m-%d %H:%M:%S", localtime $unixtime);
 }
 sub PrintFile {
     my ($self, $file)= @_;
-    printf("@%08lx %6d %s %s\n", 
+    printf("0x%08lx %6d %s %s\n", 
         $file->{ulLoadOffset}, 
         exists $file->{nRealFileSize}?$file->{nRealFileSize}:$file->{nFileSize}, 
         filetimestring($file), 
         $file->{filename});
+}
+sub PrintCopyEntry {
+    my ($self, $copyentry)= @_;
+
+    printf("0x%08lx %6d ------------------- 0x%08lx to 0x%08lx\n", 
+        $copyentry->{ulSource}, 
+        $copyentry->{ulCopyLen}, 
+        $copyentry->{ulDest}, 
+        $copyentry->{ulDest} + $copyentry->{ulDestLen}
+    );
+    
 }
 sub PrintFileList {
     my ($self)= @_;
@@ -260,6 +283,8 @@ sub PrintFileList {
     $self->PrintFile($_) for (@{$self->{files}});
     printf("--modules\n");
     $self->PrintFile($_) for (@{$self->{modules}});
+    printf("--copy entries\n");
+    $self->PrintCopyEntry($_) for (@{$self->{copylist}});
 }
 
 sub ParseRomHdr {
@@ -268,7 +293,7 @@ sub ParseRomHdr {
     my @fields= unpack("V17v2V3", $data);
     my @names= qw(dllfirst dlllast physfirst physlast nummods ulRAMStart ulRAMFree ulRAMEnd ulCopyEntries ulCopyOffset ulProfileLen ulProfileOffset numfiles ulKernelFlags ulFSRamPercent ulDrivglobStart ulDrivglobLen usCPUType usMiscFlags pExtensions ulTrackingStart ulTrackingLen);
     return  {
-        desc=>sprintf("romhdr : %s", join ", ", map { sprintf("%s:%08lx", $names[$_], $fields[$_]) } (0..$#names)),
+        desc=>sprintf("romhdr : %s", join ", ", map { sprintf("%s:0x%08lx", $names[$_], $fields[$_]) } (0..$#names)),
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
     };
 }
@@ -293,7 +318,7 @@ sub ParseModuleEntry {
     my @fields= unpack("V8", $data);
     my @names= qw(dwFileAttributes ftTime_low ftTime_high nFileSize lpszFileName ulE32Offset ulO32Offset ulLoadOffset);
     return  {
-        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:%08lx", $names[$_], $fields[$_]) } (0..$#names)),
+        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:0x%08lx", $names[$_], $fields[$_]) } (0..$#names)),
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
     };
 }
@@ -319,7 +344,7 @@ sub ParseFilesEntry {
     my @fields= unpack("V7", $data);
     my @names= qw(dwFileAttributes ftTime_low ftTime_high nRealFileSize nCompFileSize lpszFileName ulLoadOffset);
     return  {
-        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:%08lx", $names[$_], $fields[$_]) } (0..$#names)),
+        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:0x%08lx", $names[$_], $fields[$_]) } (0..$#names)),
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
     };
 }
@@ -345,10 +370,11 @@ sub ParseCopyEntry {
     my @fields= unpack("V4", $data);
     my @names= qw(ulSource ulDest ulCopyLen ulDestLen);
     return  {
-        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:%08lx", $names[$_], $fields[$_]) } (0..$#names)),
+        desc=>sprintf("%s : %s", $desc, join ", ", map { sprintf("%s:0x%08lx", $names[$_], $fields[$_]) } (0..$#names)),
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
     };
 }
+my $last_module = 0;
 sub AddModuleHeaders {
     my $self= shift;
     my $module= shift;
@@ -358,7 +384,12 @@ sub AddModuleHeaders {
     if (!defined $self->{rom_type}) {
         $self->{rom_type}= determine_rom_type($rom->GetVData($module->{ulE32Offset}, 0x70));
     }
-    if ($self->{rom_type}==5) {
+    if ($self->{rom_type}==2) {
+        $module->{e32}= ParseE32Header_v2($rom->GetVData($module->{ulE32Offset}, 0x64));
+
+        $mem->vadd($module->{ulE32Offset}, 0x64, "UTV e32 header %s", $module->{filename});
+    }
+    elsif ($self->{rom_type}==5) {
         $module->{e32}= ParseE32Header_v5($rom->GetVData($module->{ulE32Offset}, 0x6e));
         $mem->vadd($module->{ulE32Offset}, 0x6e, "e32 header %s", $module->{filename});
     }
@@ -371,12 +402,12 @@ sub AddModuleHeaders {
     }
     if ($g_verbose) {
         printf("module %s\n", $module->{filename});
-        printf("flags=%08x, entry=%08x, vbase/size=%08x/%08x, subsys=%d/v%d.%d, stack=%08x ts=%08x\n",
+        printf("flags=0x%08x, entry=0x%08x, vbase/size=0x%08x/0x%08x, subsys=%d/v%d.%d, stack=0x%08x ts=0x%08x\n",
             map { $module->{e32}{$_}||0 }
                 qw(imageflags entryrva vbase vsize subsys subsysmajor subsysminor stackmax timestamp));
         for my $inf (qw(sect14 EXP_ IMP_ RES_ EXC_ SEC_ FIX_ DEB_ IMD_ MSP_)) {
             if ($module->{e32}{$inf.'rva'} || $module->{e32}{$inf.'size'}) {
-                printf("      %s: %08x %08x\n", $inf, $module->{e32}{$inf.'rva'}, $module->{e32}{$inf.'size'});
+                printf("      %s: 0x%08x 0x%08x\n", $inf, $module->{e32}{$inf.'rva'}, $module->{e32}{$inf.'size'});
             }
         }
     }
@@ -384,12 +415,13 @@ sub AddModuleHeaders {
     for my $objidx (1..$module->{e32}{objcnt}) {
         push @{$module->{o32}}, ParseO32Header($rom->GetVData($module->{ulO32Offset}+($objidx-1)*0x18, 0x18));
 
-        printf("  o%d rva=%08x v:%08x,p:%08x, flag=%08x, real=%08x, ptr=%08x\n", $objidx-1,
+        printf("  o%d rva=0x%08x v:0x%08x,p:0x%08x, flag=0x%08x, real=0x%08x, ptr=0x%08x\n", $objidx-1,
                 map {$module->{o32}[-1]{$_}} qw(rva vsize psize flags realaddr dataptr)) if ($g_verbose);
     }
     $mem->vadd($module->{ulO32Offset}, 0x18*$module->{e32}{objcnt}, "o32 headers %s", $module->{filename});
 }
 sub determine_rom_type {
+    return 2; # EMAC: always return 2 for UTV
     my @f= unpack("V*", shift);
     if ($f[8] < $f[5] && $f[26]>0) {
         return 4;
@@ -411,6 +443,16 @@ sub ParseE32Header_v4 {
     my $data= shift;
     my @fields= unpack("v2V2v2V4V18v", $data);
     my @names= qw(objcnt imageflags entryrva vbase subsysmajor subsysminor stackmax vsize sect14rva sect14size EXP_rva EXP_size IMP_rva IMP_size RES_rva RES_size EXC_rva EXC_size SEC_rva SEC_size FIX_rva FIX_size DEB_rva DEB_size IMD_rva IMD_size MSP_rva MSP_size subsys);
+    return  {
+        map { ( $names[$_] => $fields[$_] ) } (0..$#names)
+    };
+}
+# Added for UTV
+sub ParseE32Header_v2 {
+    my $data= shift;
+    my @fields= unpack("v2V2v2V2v2V18", $data);
+    # dllflags is extra testing, unknown if it's actually dllflags
+    my @names= qw(objcnt imageflags entryrva vbase subsysmajor subsysminor stackmax vsize subsys dllflags EXP_rva EXP_size IMP_rva IMP_size RES_rva RES_size EXC_rva EXC_size SEC_rva SEC_size FIX_rva FIX_size DEB_rva DEB_size IMD_rva IMD_size MSP_rva MSP_size);
     return  {
         map { ( $names[$_] => $fields[$_] ) } (0..$#names)
     };
@@ -441,8 +483,15 @@ sub DumpModulesAreas {
         for my $o32ent (@{$mod->{o32}}) {
             my $l= $o32ent->{psize}; $l= $o32ent->{vsize} if ($o32ent->{vsize}<$l);
             $mem->vadd($o32ent->{dataptr}, $l, 
-                "v%07lx r%07lx %smodule data %s", $o32ent->{rva}, $o32ent->{realaddr}, ($o32ent->{flags}&0x2000)?"compressed ":"", $desc) if ($o32ent->{dataptr});
+                "f%07lx v%07lx r%07lx %smodule data %s", $o32ent->{flags}, $o32ent->{rva}, $o32ent->{realaddr}, (($o32ent->{flags}&0x2000)? "compressed " : ""), $desc) if ($o32ent->{dataptr});
         }
+    }
+}
+sub DumpCopyEntryAreas {
+    my $self= shift;
+    for my $file (@{$self->{copylist}}) {
+        my $desc= $file->{ulDest};
+        $self->{mem}->vadd($file->{ulSource}, $file->{ulCopyLen}, "copy data to 0x%08lx", $desc);
     }
 }
 sub GetUniqueFilename {
@@ -467,7 +516,12 @@ sub GetUncompressedData {
             return $data;
         }
 
-        #printf("decompress %08lx:%08lx %08lx -> %08lx : %s\n", $ofs, $size, length($data), $fullsize, unpack("H*", $data));
+        # EMAC: always return data, even if it's compressed. It will be decompressed later.
+        # This is so I don't have to deal with XdaDevelopers::CompressUtils on Linux or
+        # ask people to manually compile and install this module.
+        return $data;
+
+        #printf("decompress 0x%08lx:0x%08lx 0x%08lx -> 0x%08lx : %s\n", $ofs, $size, length($data), $fullsize, unpack("H*", $data));
         # .. append some extra data, so the (buggy) dll can read beyond the end of its input buffer.
 require XdaDevelopers::CompressUtils;
         my $decomp= $g_use_wince3_compression
@@ -504,15 +558,20 @@ sub SaveFile {
 }
 sub SaveModule {
     my ($self, $module, $savedir)= @_;
+    
+    my $module_time_t = ($module->{ftTime_high} << 0x20) + $module->{ftTime_low};
 
-    my $exe= ExeFile->new($self->{romhdr}{usCPUType});
+    $module_time_t /= 10000000;
+    $module_time_t -= 11644473600;
+
+    my $exe= ExeFile->new($self->{romhdr}{usCPUType} || 0x0166, int($module_time_t)); # EMAC: default to UTV CPU type, MIPS little endian
 
     for my $o32ent (@{$module->{o32}}) {
         my $size= $o32ent->{vsize}; $size= $o32ent->{psize} if ($size>$o32ent->{psize});
 
         $o32ent->{data}= GetUncompressedData($rom, $o32ent->{dataptr}, $size, $o32ent->{vsize}, $o32ent->{flags} & IMAGE_SCN_COMPRESSED);
         if (!defined $o32ent->{data}) {
-            printf("ERROR decompressing section %08lx-%08lx (%d -> %d) of '%s'\n", 
+            printf("ERROR decompressing section 0x%08lx-0x%08lx (%d -> %d) of '%s'\n", 
                 $o32ent->{dataptr}, $o32ent->{dataptr}+$size, 
                 $size, $o32ent->{vsize},
                 $module->{filename});
@@ -524,7 +583,34 @@ sub SaveModule {
 
     my $filename= GetUniqueFilename($savedir, $module->{filename});
 
-    $exe->SaveToFile($filename);
+    my $peexe = $exe->SaveToFile($filename);
+
+     # EMAC: added for UTV copy entry info
+    for (@{$peexe->{o32obj}}) {
+        $self->{o32sections}{$_->{odataptr}} = {
+            "filename" => $module->{filename},
+            "name" => $_->{name},
+            "dataptr" => $_->{odataptr},
+            "size" => $_->{psize}
+        }
+    }
+}
+sub SaveCopyEntry {
+    my ($self, $copyentry, $savedir)= @_;
+
+    my $namesuffix = "";
+    if(defined($self->{o32sections}{$copyentry->{ulSource}})) {
+        $namesuffix = "_" . $self->{o32sections}{$copyentry->{ulSource}}->{filename} . "-" . $self->{o32sections}{$copyentry->{ulSource}}->{name}
+    }
+
+    my $data = $rom->GetVData($copyentry->{ulSource}, $copyentry->{ulCopyLen});
+
+    my $filename = GetUniqueFilename($savedir, sprintf("data_0x%08lx_0x%08lx%s.bin", $copyentry->{ulDest}, ($copyentry->{ulDest} + $copyentry->{ulDestLen}), $namesuffix));
+
+    my $fh= IO::File->new($filename, "w+") or die "$filename: $!\n";
+    binmode $fh;
+    $fh->print($data);
+    $fh->close();
 }
 
 # ... these are class methods / static functions
@@ -537,14 +623,14 @@ sub FindRomHdr {
 #   }
     my $hdrptr= $rom->GetPDword($firstofs+0x44);
 
-    #printf("searching for header at ptr=%08lx from ofs=%08lx\n", $hdrptr, $firstofs+0x48);
+    #printf("searching for header at ptr=0x%08lx from ofs=0x%08lx\n", $hdrptr, $firstofs+0x48);
     # search for romheader, starting directly after 'ECEC', until end of rom.
     for(my $hdrofs=$firstofs+0x48 ; $hdrofs < $rom->{size}-0x54 ; $hdrofs+=4)
     {
         my $firstptr= $rom->GetPDword($hdrofs+8);
 
         if ($hdrptr-$firstptr==$hdrofs-$firstofs) {
-            #printf("found romheader at ptr:f=%08lx, h=%08lx  | ofs:f=%08lx, h=%08lx\n",
+            #printf("found romheader at ptr:f=0x%08lx, h=0x%08lx  | ofs:f=0x%08lx, h=0x%08lx\n",
             #    $firstptr, $hdrptr, $firstofs, $hdrofs);
 
             return $hdrofs;
@@ -560,7 +646,7 @@ sub FindRomHdrByCpu {
     my $cpuid= pack("V",shift);
     my $hdrptr= $rom->GetPDword($firstofs+0x44);
 
-    #printf("searching for cpuid in header at ptr=%08lx from ofs=%08lx\n", $hdrptr, $firstofs+0x48);
+    #printf("searching for cpuid in header at ptr=0x%08lx from ofs=0x%08lx\n", $hdrptr, $firstofs+0x48);
     # search for romheader, starting directly after 'ECEC', until end of rom.
     #   ( 0x48 = ofs directly ofter romhdr-ptr, 0x44 is ofs of cpuid in romhdr )
     my $ofs=$rom->find($cpuid, $firstofs+0x48+0x44);
@@ -571,11 +657,11 @@ sub FindRomHdrByCpu {
         my $firstptr= $rom->GetPDword($hdrofs+8);
 
         #print unpack("H*", $rom->GetPData($hdrofs, 0x50)), "\n";
-        #printf(" cpuid at %08lx  ptr:f=%08lx, h=%08lx  | ofs:f=%08lx, h=%08lx\n",
+        #printf(" cpuid at 0x%08lx  ptr:f=0x%08lx, h=0x%08lx  | ofs:f=0x%08lx, h=0x%08lx\n",
         #    $ofs, $firstptr, $hdrptr, $firstofs, $hdrofs);
 
         if ($hdrptr-$firstptr==$hdrofs-$firstofs) {
-            #printf("found romheader at ptr:f=%08lx, h=%08lx  | ofs:f=%08lx, h=%08lx\n",
+            #printf("found romheader at ptr:f=0x%08lx, h=0x%08lx  | ofs:f=0x%08lx, h=0x%08lx\n",
             #    $firstptr, $hdrptr, $firstofs, $hdrofs);
 
             return $hdrofs;
@@ -651,7 +737,7 @@ sub GetDword {
 sub GetVData {
     my ($self, $ofs, $len)= @_;
     if ($ofs-$self->{base}<0 || $ofs-$self->{base}+$len > length($self->{data})) {
-        croak sprintf("%08lx l=%08lx beyond size : base=%08lx l=%08lx\n", $ofs, $len, $self->{base}, length($self->{data}));
+        croak sprintf("0x%08lx l=0x%08lx beyond size : base=0x%08lx l=0x%08lx\n", $ofs, $len, $self->{base}, length($self->{data}));
     }
     return substr($self->{data}, $ofs-$self->{base}, $len)
 }
@@ -722,7 +808,7 @@ sub vfillblanks {
         next if ($vofs<$first);
         last if ($vofs>$last);
 
-        #printf("adding unknown first=%08lx last=%08lx vofs=%08lx vprev=%08lx pofs=%08lx\n", $first, $last, $vofs, $vprev, $pofs);
+        #printf("adding unknown first=0x%08lx last=0x%08lx vofs=0x%08lx vprev=0x%08lx pofs=0x%08lx\n", $first, $last, $vofs, $vprev, $pofs);
         $self->vadd_unknown($rom, $first, $vofs-$first) if (!$vprev && $vofs>$first);
         $self->vadd_unknown($rom, $vprev, $vofs-$vprev) if ($vprev && $vofs>$vprev);
         my $maxlen;
@@ -732,7 +818,7 @@ sub vfillblanks {
         $vprev= $vofs+$maxlen;
     }
 
-    #printf("adding last unknown first=%08lx last=%08lx vprev=%08lx\n", $first, $last, $vprev);
+    #printf("adding last unknown first=0x%08lx last=0x%08lx vprev=0x%08lx\n", $first, $last, $vprev);
     $self->vadd_unknown($rom, $vprev, $last-$vprev) if ($vprev && $last > $vprev);
 }
 sub vadd_unknown {
@@ -747,18 +833,19 @@ sub vadd_unknown {
     }
     elsif ($data =~ /^...\xea\x00+$/) {
         my $target=unpack("V", $data);
-        $desc= sprintf("kernel entry point : branch to %08lx", $start+4*($target&0xffffff)+8);
+        $desc= sprintf("kernel entry point : branch to 0x%08lx", $start+4*($target&0xffffff)+8);
     }
     else {
         if (length($data)>64) {
             $desc= "unknown-large: ".unpack("H*", substr($data, 0, 64));
         }
         else {
-            $desc= "unknown: ".unpack("H*", $data);
+            $desc= "UTV jump instruction block: ".unpack("H*", $data); # EMAC: changed
+            #$desc= "unknown: ".unpack("H*", $data);
         }
 
     }
-    #printf("... unknown %08lx-%08lx L%08lx\n", $start, $start+$len, $len);
+    #printf("... unknown 0x%08lx-0x%08lx L0x%08lx\n", $start, $start+$len, $len);
     $self->vadd($start, $len, $desc);
 }
 
@@ -801,7 +888,7 @@ sub padd_unknown {
     if ($data =~ /^(\x00*)(\xff*)$/) {
         my $l_nul= length($1);
         my $l_one= length($2);
-        #printf("adding NULONE section: %08lx l %08lx\n", $start, $len); ###
+        #printf("adding NULONE section: 0x%08lx l 0x%08lx\n", $start, $len); ###
         $self->padd($start, $l_nul, "NUL") if ($l_nul);
         $self->padd($start+$l_nul, $l_one, "ONE") if ($l_one);
     }
@@ -817,7 +904,7 @@ sub padd_unknown {
         pos($data)= $bofs;
         if ($data =~ /\G\xff+/) {
             if (length($&)>16) {
-                #printf("adding ONE section: %08lx l %08lx : %08lx l %08lx\n", $start, $len, $start+$bofs, length($&)); ###
+                #printf("adding ONE section: 0x%08lx l 0x%08lx : 0x%08lx l 0x%08lx\n", $start, $len, $start+$bofs, length($&)); ###
                 $self->padd($start+$bofs, length($&), "ONE");
                 $bofs += length($&);
             }
@@ -846,7 +933,7 @@ sub padd_unknown {
                 }
             }
         }
-        #printf("punknown: start=%08lx len=%08lx eofs=%08lx bofs=%08lx\n", $start, $len, $eofs, $bofs);
+        #printf("punknown: start=0x%08lx len=0x%08lx eofs=0x%08lx bofs=0x%08lx\n", $start, $len, $eofs, $bofs);
 
 # removed this restriction:  $len-$bofs==0x2000 && 
         if (substr($data, $bofs+0x48, 4) eq "RSA1") {
@@ -888,10 +975,10 @@ sub ParseXipChain {
     my $nrxips= unpack("V", $xipchain);
     for (my $i=0 ; $i<$nrxips ; $i++) {
         my $xip= ParseXipChainEntry(substr($xipchain, 4+0x290*$i, 0x290));
-        $self->vadd($xip->{pvAddr}, 0, sprintf("xip block %08lx-%08lx '%s'", $xip->{pvAddr}, $xip->{pvAddr}+$xip->{dwLength}, $xip->{szName}));
+        $self->vadd($xip->{pvAddr}, 0, sprintf("xip block 0x%08lx-0x%08lx '%s'", $xip->{pvAddr}, $xip->{pvAddr}+$xip->{dwLength}, $xip->{szName}));
 
         if (exists $g_xipchaininfo{$xip->{pvAddr}}) {
-            printf("!!! xipchain contains duplicate address: %08lx\n", $xip->{pvAddr});
+            printf("!!! xipchain contains duplicate address: 0x%08lx\n", $xip->{pvAddr});
         }
         $g_xipchaininfo{$xip->{pvAddr}}= $xip;
     }
@@ -904,10 +991,10 @@ sub print {
     my $prev;
     for my $pofs (sort {$a<=>$b} keys %{$self->{items}}) {
         if ($prev && $pofs>$prev) {
-            printf("%08lx-%08lx L%08lx  unknown\n", $prev, $pofs, $pofs-$prev);
+            printf("0x%08lx-0x%08lx L0x%08lx  unknown\n", $prev, $pofs, $pofs-$prev);
         }
         elsif ($prev && $pofs<$prev) {
-            printf("%08lx-%08lx L%08lx  overlap!!\n", $pofs, $prev, $prev-$pofs);
+            printf("0x%08lx-0x%08lx L0x%08lx  overlap!!\n", $pofs, $prev, $prev-$pofs);
         }
         my $maxlen;
         for my $item (sort {$a->{len}<=>$b->{len}} @{$self->{items}{$pofs}}) {
@@ -919,13 +1006,13 @@ sub print {
             }
 
             if (exists $item->{vstart}) {
-                printf("%08lx-%08lx | %08lx-%08lx L%08lx %s\n", 
+                printf("0x%08lx-0x%08lx | 0x%08lx-0x%08lx L0x%08lx %s\n", 
                     $item->{pstart}, $item->{pstart}+$item->{len},
                     $item->{vstart}, $item->{vstart}+$item->{len},
                     $item->{len}, $item->{desc});
             }
             else {
-                printf("%08lx-%08lx  L%08lx %s\n", 
+                printf("0x%08lx-0x%08lx  L0x%08lx %s\n", 
                     $item->{pstart}, $item->{pstart}+$item->{len},
                     $item->{len}, $item->{desc});
             }
@@ -941,9 +1028,14 @@ use strict;
 use Carp;
 
 sub new {
-    my ($class, $cputype)= @_;
+    my ($class, $cputype, $timestamp)= @_;
+
+    my %sections = (); # EMAC: added to detect duplicate sections.
+
     return bless {
         cputype=>$cputype,
+        timestamp=>$timestamp,
+        sections=>\%sections
     }, $class;
 }
 sub addo32 {
@@ -965,19 +1057,27 @@ sub save_data {
 sub SaveToFile {
     my ($self, $fn)= @_;
 
-    my $exedata= $self->reconstruct_binary();
+    my ($exedata, $peexe)= $self->reconstruct_binary(); # EMAC: Added $peexe for copy entry info comparison for the UTV
+
     save_data($fn, $exedata);
+
+    return $peexe; # EMAC: Added for copy entry info comparison for the UTV
 }
 
 sub pack_mz_header {
     return pack("H*", "4d5a90000300000004000000ffff0000").
            pack("H*", "b8000000000000004000000000000000").
            pack("H*", "00000000000000000000000000000000").
-           pack("H*", "00000000000000000000000080000000").
+           pack("H*", "000000000000000000000000c0000000").
            pack("H*", "0e1fba0e00b409cd21b8014ccd215468").
            pack("H*", "69732070726f6772616d2063616e6e6f").
            pack("H*", "742062652072756e20696e20444f5320").
-           pack("H*", "6d6f64652e0d0d0a2400000000000000");
+           pack("H*", "6d6f64652e0d0d0a2400000000000000").
+           pack("H*", "00000000000000000000000000000000"). # EMAC: Added extra padding to match UTV
+           pack("H*", "00000000000000000000000000000000").
+           pack("H*", "00000000000000000000000000000000").
+           pack("H*", "00000000000000000000000000000000");
+
 }
 sub pack_e32exe {
     my ($e32exe)= @_;
@@ -1020,7 +1120,7 @@ sub pack_e32exe {
             $e32exe->{vsize}, 
             $e32exe->{hdrsize}, 
             $e32exe->{filechksum}, 
-            $e32exe->{subsys}, 
+            $e32exe->{subsys}||0x09, # EMAC: change for UTV 
             $e32exe->{dllflags}, 
 
             $e32exe->{stackmax}, 
@@ -1049,9 +1149,13 @@ sub pack_o32obj {
 }
 sub IMAGE_FILE_RELOCS_STRIPPED { 1 };
 sub IMAGE_SCN_COMPRESSED               { 0x00002000 }
-sub IMAGE_SCN_CNT_CODE                 { 0x00000020 }
-sub IMAGE_SCN_CNT_INITIALIZED_DATA     { 0x00000040 }
-sub IMAGE_SCN_CNT_UNINITIALIZED_DATA   { 0x00000080 }
+#sub IMAGE_SCN_CNT_CODE                 { 0x00000020 }
+#sub IMAGE_SCN_CNT_INITIALIZED_DATA     { 0x00000040 }
+#sub IMAGE_SCN_CNT_UNINITIALIZED_DATA   { 0x00000080 }
+sub IMAGE_SCN_CNT_CODE                 { 0x00000020 } # EMAC: Changed for UTV
+sub IMAGE_SCN_CNT_INITIALIZED_DATA     { 0xC0000040 } # EMAC: Changed for UTV
+sub IMAGE_SCN_CNT_UNINITIALIZED_DATA   { 0x40000040 } # EMAC: Changed for UTV
+sub IMAGE_SCN_CNT_SHARED               { 0xD0000040 } # EMAC: Added for UTV
 sub STD_EXTRA    {  16 }
 sub IMAGE_FILE_MACHINE_ARM  { 0x01c0 }
 
@@ -1070,7 +1174,7 @@ sub CalcSegmentSizeSum {
     for my $o32ent (@o32rom) {
         # vsize is not entirely correct, I should use the uncompressed size,
         # but, I don't know that here yet.
-        if ($o32ent->{flags}&$segtypeflag) {
+        if (($o32ent->{flags}&$segtypeflag)==$segtypeflag) {
             $size += $o32ent->{vsize};
         }
     }
@@ -1094,16 +1198,19 @@ sub round_padding {
 }
 
 sub convert_e32rom_to_e32exe {
-    my ($cputype, $e32rom, @o32rom)= @_;
+    my ($cputype, $timestamp, $e32rom, @o32rom)= @_;
     my %e32exe;
     $e32exe{magic}= "PE";
     $e32exe{cpu}= $cputype;
     $e32exe{objcnt}= $e32rom->{objcnt};
-    $e32exe{timestamp}= $e32rom->{timestamp}||0;
+    $e32exe{timestamp}= $e32rom->{timestamp}||$timestamp||0;
     $e32exe{symtaboff}=0;
     $e32exe{symcount}=0;
     $e32exe{opthdrsize}= 0xe0;   # fixed.
-    $e32exe{imageflags}= $e32rom->{imageflags} | IMAGE_FILE_RELOCS_STRIPPED;
+    $e32exe{imageflags}= $e32rom->{imageflags};
+    if(($e32rom->{FIX_rva} == 0 || $e32rom->{FIX_size} == 0)) { # EMAC: sometimes the .reloc section rva and size are defined in the utv but not data is available for it in the ROM
+        $e32exe{imageflags} |= IMAGE_FILE_RELOCS_STRIPPED;
+    }
     $e32exe{coffmagic}= 0x10b;
     $e32exe{linkmajor}= 6;
     $e32exe{linkminor}= 1;
@@ -1120,15 +1227,16 @@ sub convert_e32rom_to_e32exe {
     $e32exe{osminor}= 0;
     $e32exe{usermajor}= 0;
     $e32exe{userminor}= 0;
-    $e32exe{subsysmajor}= $e32rom->{subsysmajor};
-    $e32exe{subsysminor}= $e32rom->{subsysminor};
+    $e32exe{subsysmajor}= $e32rom->{subsysmajor}||0;
+    $e32exe{subsysminor}= $e32rom->{subsysminor}||0;
     $e32exe{res1}= 0;   # 'Win32 version' according to dumpbin
     $e32exe{vsize}= $e32rom->{vsize};
-    $e32exe{hdrsize}= round_to_page(0x80+0xf8+@o32rom*0x28, $e32exe{filealign});
+    #$e32exe{hdrsize}= round_to_page(0x80+0xf8+@o32rom*0x28, $e32exe{filealign});
+    $e32exe{hdrsize}= round_to_page(0xC0+0xf8+@o32rom*0x28, $e32exe{filealign}); # EMAC: changed for UTV
 
     $e32exe{filechksum}= 0;
     $e32exe{subsys}= $e32rom->{subsys};
-    $e32exe{dllflags}= 0;
+    $e32exe{dllflags}= $e32rom->{dllflags}||0;
     $e32exe{stackmax}= $e32rom->{stackmax};
     $e32exe{stackinit}=0x1000; # ?
     $e32exe{heapmax}=0x100000; # ?
@@ -1144,7 +1252,7 @@ sub convert_e32rom_to_e32exe {
     $e32exe{SEC_rva}= $e32rom->{SEC_rva}; $e32exe{SEC_size}= $e32rom->{SEC_size}; # always 0
 
     # relocation info is always missing
-    # $e32exe{FIX_rva}= $e32rom->{FIX_rva}; $e32exe{FIX_size}= $e32rom->{FIX_size};
+    $e32exe{FIX_rva}= $e32rom->{FIX_rva}; $e32exe{FIX_size}= $e32rom->{FIX_size};
 
     # $e32exe{DEB_rva}= $e32rom->{DEB_rva}; $e32exe{DEB_size}= $e32rom->{DEB_size};
     $e32exe{IMD_rva}= $e32rom->{IMD_rva}; $e32exe{IMD_size}= $e32rom->{IMD_size}; # always 0
@@ -1155,7 +1263,7 @@ sub convert_e32rom_to_e32exe {
     return \%e32exe;
 }
 sub convert_o32rom_to_o32obj {
-    my ($o32rom, $e32rom)= @_;
+    my ($perom, $o32rom, $e32rom)= @_;
 
     my $segtype;
     if ($e32rom->{RES_rva} == $o32rom->{rva} && $e32rom->{RES_size} == $o32rom->{vsize}) {
@@ -1164,17 +1272,35 @@ sub convert_o32rom_to_o32obj {
     elsif ($e32rom->{EXC_rva} == $o32rom->{rva} && $e32rom->{EXC_size} == $o32rom->{vsize}) {
         $segtype= ".pdata";
     }
+    elsif ($e32rom->{FIX_rva} == $o32rom->{rva} && $e32rom->{FIX_size} == $o32rom->{vsize}) { # EMAC: added for UTV
+        $segtype= ".reloc";
+    }
     elsif ($o32rom->{flags}&IMAGE_SCN_CNT_CODE) {
         $segtype= ".text";
     }
-    elsif ($o32rom->{flags}&IMAGE_SCN_CNT_INITIALIZED_DATA) {
+    elsif ($o32rom->{flags} == IMAGE_SCN_CNT_INITIALIZED_DATA) { # EMAC: Changed for UTV
         $segtype= ".data";
     }
-    elsif ($o32rom->{flags}&IMAGE_SCN_CNT_UNINITIALIZED_DATA) {
+    elsif ($o32rom->{flags} == IMAGE_SCN_CNT_UNINITIALIZED_DATA) { # EMAC: Changed for UTV
         $segtype= ".pdata";
+
+        if(defined($perom->{sections}->{$segtype}) && !defined($perom->{sections}->{".rsrc"})) { # EMAC: use .resc for the second .pdata
+            $segtype = ".rsrc";
+        }
+    }
+    elsif ($o32rom->{flags} == IMAGE_SCN_CNT_SHARED) { # EMAC: Added for UTV
+        $segtype= ".shared";
     }
     else {
         $segtype= ".other";
+    }
+
+    if(defined($perom->{sections}->{$segtype})) { # EMAC: If there's duplicate sections, rename
+        $perom->{sections}->{$segtype}++;
+
+        $segtype = substr($segtype, 0, -1) . $perom->{sections}->{$segtype};
+    } else {
+        $perom->{sections}->{$segtype} = 1;
     }
 
     my %o32obj;
@@ -1182,11 +1308,12 @@ sub convert_o32rom_to_o32obj {
     # todo: add sequence nrs to identically named sections
     $o32obj{name} = $segtype;
     $o32obj{vsize}= $o32rom->{vsize};
-    $o32obj{rva}  = $g_use_wince3_compression 
+    $o32obj{rva}  = $g_use_wince3_compression
         ? $o32rom->{rva}
         : (($o32rom->{realaddr}||$o32rom->{dataptr}) - $e32rom->{vbase});
     $o32obj{psize}= $o32rom->{psize};
     $o32obj{psize}= length($o32rom->{data}) if (length($o32rom->{data}) > $o32rom->{psize});
+    $o32obj{odataptr} = $o32rom->{dataptr}; # EMAC: added for the UTV
     $o32obj{dataptr}= 0;  # *** set at a later moment
     $o32obj{realaddr}= 0; # file pointer to relocation table
     $o32obj{access}= 0;   # file pointer to line numbers
@@ -1200,19 +1327,46 @@ sub convert_rom_to_exe {
     my ($perom)= @_;
 
     my %peexe;
-    $peexe{e32exe}= convert_e32rom_to_e32exe($perom->{cputype}, $perom->{e32rom}, @{$perom->{o32rom}});
+    $peexe{e32exe}= convert_e32rom_to_e32exe($perom->{cputype}, $perom->{timestamp}, $perom->{e32rom}, @{$perom->{o32rom}});
+
+    # EMAC: even though the .reloc section is stripped from the ROM, the UTV will crash without the rva and vsize
+    if(($peexe{e32exe}->{FIX_rva} > 0 && $peexe{e32exe}->{FIX_size} > 0) && $g_addblankreloctable) { 
+        my $has_reloc_data = 0;
+        for my $o32ent (@{$perom->{o32rom}}) {
+            if ($peexe{e32exe}->{FIX_rva} == $o32ent->{rva} && $peexe{e32exe}->{FIX_size} == $o32ent->{vsize}) {
+                $has_reloc_data = 1;
+                last;
+            }
+        }
+        if(!$has_reloc_data) {
+            push @{$perom->{o32rom}}, {
+                "rva" => $peexe{e32exe}->{FIX_rva},
+                "vsize" => $peexe{e32exe}->{FIX_size},
+                "psize" => 0,
+                "dataptr" => 0,
+                "flags" => 0x40000042,
+                "data" => ""
+            };
+            $peexe{e32exe}->{objcnt}++;
+        } else {
+            #$peexe{e32exe}->{imageflags} |= IMAGE_FILE_RELOCS_STRIPPED;
+        }
+    }
     
     my $fileofs= $peexe{e32exe}{hdrsize};
     for my $o32ent (@{$perom->{o32rom}}) {
-        my $o32obj= convert_o32rom_to_o32obj($o32ent, $perom->{e32rom});
+        my $o32obj= convert_o32rom_to_o32obj($perom, $o32ent, $perom->{e32rom});
         push @{$peexe{o32obj}}, $o32obj;
 
-        $o32obj->{dataptr}= $fileofs;
+        if($o32obj->{psize} > 0) { # EMAC: changed for UTV .reloc
+            $o32obj->{dataptr}= $fileofs;
 
-        $peexe{rvamap}{$o32ent->{rva}}= { rva=>$o32obj->{rva}, size=>$o32obj->{vsize} };
+            $peexe{rvamap}{$o32ent->{rva}}= { rva=>$o32obj->{rva}, size=>$o32obj->{vsize} };
 
-        $fileofs += round_to_page($o32obj->{psize}, $peexe{e32exe}{filealign})
+            $fileofs += round_to_page($o32obj->{psize}, $peexe{e32exe}{filealign});
+        }
     }
+
 
     return \%peexe;
 }
@@ -1246,6 +1400,22 @@ sub find_rva_patch {
     return $objrva;
 }
 
+sub repair_table {
+    my ($table_rva, $peexe, $pstr)= @_;
+
+    my $impofs= RvaToFileOfs($table_rva, @{$peexe->{o32obj}});
+    while (1) {
+        my $impaddr= strread_dword($pstr, $impofs+0x10);
+        last if ($impaddr==0);
+
+        my $newimpaddr = find_rva_patch($impaddr, $peexe->{rvamap});
+
+        strwrite_dword($pstr, $impofs+0x10, $newimpaddr);
+
+        $impofs += 0x14;
+    }
+}
+
 sub reconstruct_binary {
     my ($file)= @_;
 
@@ -1265,22 +1435,15 @@ sub reconstruct_binary {
     $image .= "\x00" x ($peexe->{e32exe}{hdrsize} - length($image));
 
     for my $o32ent (@{$file->{o32rom}}) {
-        $image .= $o32ent->{data};
-        $image .= "\x00" x round_padding(length($o32ent->{data}), $peexe->{e32exe}{filealign});
+        if(length($o32ent->{data})) { # EMAC: don't check o32 data if data isn't available. Used for the missing .reloc in UTV builds.
+            $image .= $o32ent->{data};
+            $image .= "\x00" x round_padding(length($o32ent->{data}), $peexe->{e32exe}{filealign});
+        }
     }
+    
+    # repair import table.; EMAC: removing for the UTV
+    #repair_table($peexe->{e32exe}{IMP_rva}, $peexe, \$image);
 
-    # repair import table.
-    my $impofs= RvaToFileOfs($peexe->{e32exe}{IMP_rva}, @{$peexe->{o32obj}});
-    while (1) {
-        my $impaddr= strread_dword(\$image, $impofs+0x10);
-        last if ($impaddr==0);
-
-        my $newimpaddr = find_rva_patch($impaddr, $peexe->{rvamap});
-
-        strwrite_dword(\$image, $impofs+0x10, $newimpaddr);
-
-        $impofs += 0x14;
-    }
-
-    return $image;
+    return $image, $peexe; # EMAC: Added $peexe for copy entry info comparison for the UTV
 }
+
