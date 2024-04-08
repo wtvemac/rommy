@@ -1,0 +1,2 @@
+pygame==2.5.2
+zugbruecke==0.2.1
