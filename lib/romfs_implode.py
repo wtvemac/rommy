@@ -416,7 +416,21 @@ class romfs_implode():
             level1_build_blob = b''
 
             if final_level1_path != None and os.path.isfile(final_level1_path):
-                level1_build_blob = open(final_level1_path, "rb").read()
+                level1_build_blob = bytearray(open(final_level1_path, "rb").read())
+
+                # Checksumming this build just in case it was edited and the checksum wasn't fixed!
+                if len(level1_build_blob) > 0x14:
+                    code_size = int.from_bytes(bytes(level1_build_blob[0x10:0x14]), "big") << 2
+                    if len(level1_build_blob) >= code_size:
+                        level1_build_blob[0x08:0x0c] = bytearray(0x04)
+                        code_checksum = build_meta.chunked_checksum(level1_build_blob[0x00:code_size])
+                        struct.pack_into(
+                            endian + "I",
+                            level1_build_blob,
+                            0x08,
+                            code_checksum
+                        )
+
 
             if romfs_blob == None or len(romfs_blob) == 0 and "source_build_path" in build_info and "romfs_offset" in build_info and "romfs_size" in build_info and build_info["romfs_size"] > 0 and build_info["romfs_offset"] > 0 and build_info["image_type"] != IMAGE_TYPE.COMPRESSED_BOX:
                 romfs_blob = build_meta.get_file_data(build_info["source_build_path"], (build_info["romfs_offset"] - build_info["romfs_size"]), build_info["romfs_size"])
