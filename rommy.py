@@ -448,6 +448,44 @@ def info(in_path, no_matryoshka = False, no_autodisk = False, no_data_section = 
                 print("\n\n=== Autodisk Files ===\n")
                 autodisk.list(in_path, True)
 
+def fixcs(in_path):
+    print("Checking checksum for '" + in_path + "'")
+
+    build_blob = bytearray(open(in_path, "rb").read())
+
+    updated_blob = False
+
+    code_size = int.from_bytes(bytes(build_blob[0x10:0x14]), "big") << 2
+    if len(build_blob) >= code_size:
+        current_checksum = int.from_bytes(bytes(build_blob[0x08:0x0c]))
+
+        build_blob[0x08:0x0c] = bytearray(0x04)
+        calculated_checksum = build_meta.chunked_checksum(build_blob[0x00:code_size])
+
+        print("\tCalculated code checksum: " + hex(calculated_checksum) + ", Current code checksum: " + hex(current_checksum))
+
+        if calculated_checksum != current_checksum:
+            print("\t\tFixing code checksum")
+
+            build_blob[0x08:0x0c] = bytearray(0x04)
+            struct.pack_into(
+                ">I",
+                build_blob,
+                0x08,
+                calculated_checksum
+            )
+
+            updated_blob = True
+
+        else:
+            print("\t\tCode checksum matches, no need to fix!")
+
+    else:
+        print("Unable to checksum. File length seems bogus?")
+
+    if updated_blob:
+        open(in_path, "wb").write(build_blob)
+
 def process_file_to_folder(in_path, template_path, level1_path, out_path, silent = False, no_matryoshka = False, no_autodisk = False, no_data_section = False, no_romfs = False, no_nk = False, no_nk_registry = False, no_template = False):
     in_build_info = build_meta.detect(in_path)
 
@@ -1014,6 +1052,9 @@ def main():
     ap.add_argument('--list', action='store_true',
                     help="Same as --info")
 
+    ap.add_argument('--fixcs', action='store_true',
+                    help="Fixes the code in an approm file.")
+
     ap.add_argument('--silent', '-q', action='store_true',
                     help="Don't print anything unless it's a fatal exception. --info ignores this.")
 
@@ -1158,8 +1199,11 @@ def main():
                 level1_lzj_version = LZJ_VERSION[_level1_lzj_version]
 
         process(arg.IN_PATH, arg.template_image_file, arg.OUT_PATH, out_type, silent, arg.no_matryoshka, arg.no_autodisk, arg.no_data_section, arg.no_romfs, arg.no_nk, arg.no_nk_registry, arg.no_template, arg.level1_path, arg.level0_data_path, arg.level1_data_path, level1_lzj_version, arg.autodisk_path, arg.rom_blocks, is_build_folder, arg.rom_block_size, arg.rom_block_address_base, rom_block_header_version, rom_block_compression_type, rom_block_signature_type, arg.rom_block_message)
-    elif arg.IN_PATH != None or arg.info:
-        info(arg.IN_PATH, arg.no_matryoshka, arg.no_autodisk, arg.no_data_section, arg.no_romfs, arg.no_nk, arg.no_nk_registry, (not is_build_folder or arg.rom_blocks))
+    elif arg.IN_PATH != None:
+        if arg.fixcs:
+            fixcs(arg.IN_PATH)
+        else:
+            info(arg.IN_PATH, arg.no_matryoshka, arg.no_autodisk, arg.no_data_section, arg.no_romfs, arg.no_nk, arg.no_nk_registry, (not is_build_folder or arg.rom_blocks))
 
     if arg.farted:
         do_fart()
