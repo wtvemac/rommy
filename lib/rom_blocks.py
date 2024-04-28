@@ -681,8 +681,10 @@ class rom_blocks():
                 data_size = len(data)
 
                 data_offset = _data_offset
-                if data_offset >= 0xbf000000:
+                if data_offset >= 0xbfc00000:
                     data_offset -= (data_offset & 0xffe00000)
+                elif data_offset >= 0xbf000000:
+                    data_offset -= (data_offset & 0xffc00000)
                 else:
                     data_offset &= 0xFFFFFFF
 
