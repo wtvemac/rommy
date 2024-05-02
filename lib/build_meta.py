@@ -583,6 +583,8 @@ class build_meta():
                 )
 
                 build_size = (build_info["romfs_address"] + 8) - build_info["build_address"]
+
+                build_size += build_meta.align(build_size, 0x80000)
             else:
                 build_size = file_size
 
