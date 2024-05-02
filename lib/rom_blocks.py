@@ -708,6 +708,11 @@ class rom_blocks():
                     if len(rom_block["upgrade_block_message"]) > 0:
                         print("\t\tMessage: " + rom_block["upgrade_block_message"])
 
+                    if len(data) != rom_block["uncompressed_data_size"]:
+                        print("\t\tNOTE: data size mismatch! header=" + hex(rom_block["uncompressed_data_size"]) + ", mine=" + hex(len(data)))
+                    elif rom_block["calculated_uncompressed_data_crc32"] != rom_block["uncompressed_data_crc32"]:
+                        print("\t\tNOTE: data checksum mismatch! header=" + hex(rom_block["uncompressed_data_crc32"]) + ", mine=" + hex(rom_block["calculated_uncompressed_data_crc32"]))
+
                 if data_offset >= len(file_data):
                     file_data = file_data + (b'\x00' * (data_offset - len(file_data))) + data
                 else:

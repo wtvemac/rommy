@@ -232,7 +232,7 @@ class lzss():
         compressed_size = len(compressed_data)
 
         if uncompressed_size == 0:
-            uncompressed_size = compressed_size * 4
+            uncompressed_size = compressed_size * 10
 
         uncompressed_data = bytearray(uncompressed_size + 0x100)
 
