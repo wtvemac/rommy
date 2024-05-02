@@ -239,7 +239,7 @@ class rom_blocks():
                     block_info["compressed_data"] = build_meta.readData(f, block_info["compressed_data_size"], block_info["compressed_data_offset"])
 
                     if block_info["compression_type"] == BLOCK_COMPRESSION_TYPE.LZSS:
-                        block_info["uncompressed_data"] = lzss().Lzss_Expand(block_info["compressed_data"], len(block_info["compressed_data"]))
+                        block_info["uncompressed_data"] = lzss().Lzss_Expand(block_info["compressed_data"])
                     elif block_info["compression_type"] == BLOCK_COMPRESSION_TYPE.DEFLATE:
                         block_info["uncompressed_data"] = zlib.decompress(block_info["compressed_data"])
                     else:
