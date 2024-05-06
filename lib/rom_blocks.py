@@ -413,7 +413,7 @@ class rom_blocks():
         else:
             print("\tNo upgrade blocks found")
 
-    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = [], build_type = None):
+    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = [], build_info = None):
         ROM_BLOCK_MAGIC = 0x96031889
         check_rom_blocks = []
         write_rom_blocks = []
@@ -442,23 +442,23 @@ class rom_blocks():
                 end_block_size = (file_size - end_block_offset)
                 end_reserve_size = 0x00
 
-                if build_type == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
+                if build_info != None and build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
                     # This should always calculate to 0x4000 so we don't overwrite the NVRAM
                     # I'm doing this calculation just in case there's some odd build that reserves less or more of 0x4000
 
                     # Probably a 4MB ROM
-                    if romfs_offset > 0x200000:
-                        end_reserve_size = 0x400000 - romfs_offset
+                    if build_info["romfs_offset"] > 0x200000:
+                        end_reserve_size = 0x400000 - build_info["romfs_offset"]
                     # Probably a 2MB ROM
-                    elif romfs_offset > 0x100000:
-                        end_reserve_size = 0x200000 - romfs_offset
+                    elif build_info["romfs_offset"] > 0x100000:
+                        end_reserve_size = 0x200000 - build_info["romfs_offset"]
                     # Probably a mysterious 1MB ROM
                     else:
-                        end_reserve_size = 0x100000 - romfs_offset
+                        end_reserve_size = 0x100000 - build_info["romfs_offset"]
 
                     # The NVRAM is right after the ROMFS, so don't let the file size go beyond that.
-                    if file_size > romfs_offset:
-                        file_size = romfs_offset
+                    if file_size > build_info["romfs_offset"]:
+                        file_size = build_info["romfs_offset"]
                 else:
                     end_reserve_size = 0x00
 
