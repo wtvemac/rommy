@@ -922,10 +922,10 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
             if not silent:
                 print("ROM Block Builder")
 
-            rom_block_build_type = build_meta.detect(in_path)
+            build_info = build_meta.detect(in_path)
             in_type = None
-            if rom_block_build_type != None and "image_type" in rom_block_build_type:
-                in_type = rom_block_build_type["image_type"]
+            if build_info != None and "image_type" in build_info:
+                in_type = build_info["image_type"]
 
             block_file_extension = ".rom"
             block_size = 0x10000
@@ -957,16 +957,15 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
             if rom_block_header_version != None:
                 header_version = rom_block_header_version
             else:
-                if in_type == IMAGE_TYPE.ORIG_CLASSIC_BOX or in_type == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
-                    header_version = BLOCK_HEADER_VERSION.VER1
-                else:
-                    header_version = BLOCK_HEADER_VERSION.VER2
+                header_version = BLOCK_HEADER_VERSION.VER2
 
             if rom_block_size == 0:
                 compression_type = BLOCK_COMPRESSION_TYPE.BSTR
                 block_size = 0x10000 # 64k or better
             elif rom_block_compression_type != None:
                 compression_type = rom_block_compression_type
+            elif in_type == IMAGE_TYPE.ORIG_CLASSIC_BOX or in_type == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
+                compression_type = BLOCK_COMPRESSION_TYPE.LZSS
             else:
                 compression_type = BLOCK_COMPRESSION_TYPE.BEST
 
@@ -985,7 +984,7 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
             else:
                 message_templates = []
 
-            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_size, address_base, header_version, compression_type, signature_type, message_templates)
+            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_size, address_base, header_version, compression_type, signature_type, message_templates, build_info)
         else:
             process_file_to_folder(in_path, template_path, level1_path, out_path, silent, no_matryoshka, no_autodisk, no_data_section, no_romfs, no_nk, no_nk_registry, no_template)
     elif in_type == PATH_TYPE.UNPACKED_FOLDER and out_type == PATH_TYPE.PACKED_ROM_FILE:

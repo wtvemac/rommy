@@ -20,7 +20,7 @@ from lib.build_meta import *
     Bytes 0x11-0x12    [utin8]: ??? unknown1 [always 0x01]
     Bytes 0x12-0x14   [utin16]: ??? unknown2 [always 0xffff]
     Bytes 0x14-0x18   [utin32]: Data offset or address (in full build)
-    Bytes 0x18-0x1a   [utin16]: Build block header version (upgrade version) [1=original for classic or 2=older classic and everything else]
+    Bytes 0x18-0x1a   [utin16]: Build block header version (upgrade version) [1=original for classic or 2=newer classic and everything else]
     Bytes 0x1a-0x1c   [utin16]: Compressed data offset
     Bytes 0x1c-0x1e   [utin16]: Block index
     Bytes 0x1e-0x20   [utin16]: Block flags
@@ -413,7 +413,7 @@ class rom_blocks():
         else:
             print("\tNo upgrade blocks found")
 
-    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = []):
+    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = [], build_type = None):
         ROM_BLOCK_MAGIC = 0x96031889
         check_rom_blocks = []
         write_rom_blocks = []
@@ -437,19 +437,70 @@ class rom_blocks():
             })
 
             if file_size > block_size:
-                last_block_offset = max((file_size - block_size), block_size)
-                last_block_size = (file_size - last_block_offset)
+                end_block_size = block_size
+                end_block_offset = max((file_size - end_block_size), block_size)
+                end_block_size = (file_size - end_block_offset)
+                end_reserve_size = 0x00
 
-                check_rom_blocks.append({
-                    "offset": last_block_offset,
-                    "size": last_block_size,
-                    "compression_type": compression_type,
-                    "signature_type": signature_type,
-                    "block_data": bytearray(0x00)
-                })
+                if build_type == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
+                    # This should always calculate to 0x4000 so we don't overwrite the NVRAM
+                    # I'm doing this calculation just in case there's some odd build that reserves less or more of 0x4000
 
-                for block_offset in range(block_size, last_block_offset, block_size):
-                    block_size = min(block_size, (last_block_offset - block_offset))
+                    # Probably a 4MB ROM
+                    if romfs_offset > 0x200000:
+                        end_reserve_size = 0x400000 - romfs_offset
+                    # Probably a 2MB ROM
+                    elif romfs_offset > 0x100000:
+                        end_reserve_size = 0x200000 - romfs_offset
+                    # Probably a mysterious 1MB ROM
+                    else:
+                        end_reserve_size = 0x100000 - romfs_offset
+
+                    # The NVRAM is right after the ROMFS, so don't let the file size go beyond that.
+                    if file_size > romfs_offset:
+                        file_size = romfs_offset
+                else:
+                    end_reserve_size = 0x00
+
+                # ROM block 0 = The start of the ROM
+                # ROM block 1 = The second to the end of the ROM
+                # ROM block 2 = The end of the ROM
+                # ROM block 3 = The second from the start
+                # ROM block 4 = The third from the start
+                # ROM block 5 = The fourth from the start
+                # ... and so on ...
+
+                # Not exactly sure why blocks are ordered this way. I'm sure Fadden and team had a reason.
+
+                if end_block_size > end_reserve_size and file_size > ((block_size * 2) + (block_size - end_reserve_size)):
+                    end_block_offset = file_size - (block_size - end_reserve_size) - block_size
+
+                    check_rom_blocks.append({
+                        "offset": end_block_offset,
+                        "size": block_size,
+                        "compression_type": compression_type,
+                        "signature_type": signature_type,
+                        "block_data": bytearray(0x00)
+                    })
+
+                    check_rom_blocks.append({
+                        "offset": (end_block_offset + block_size),
+                        "size": (block_size - 0x4000),
+                        "compression_type": compression_type,
+                        "signature_type": signature_type,
+                        "block_data": bytearray(0x00)
+                    })
+                else:
+                    check_rom_blocks.append({
+                        "offset": end_block_offset,
+                        "size": end_block_size,
+                        "compression_type": compression_type,
+                        "signature_type": signature_type,
+                        "block_data": bytearray(0x00)
+                    })
+
+                for block_offset in range(block_size, end_block_offset, block_size):
+                    block_size = min(block_size, (end_block_offset - block_offset))
 
                     check_rom_blocks.append({
                         "offset": block_offset,
@@ -525,6 +576,7 @@ class rom_blocks():
                         compressed_data = zlib_compressed_data
 
                 elif rom_block["compression_type"] == BLOCK_COMPRESSION_TYPE.LZSS:
+                    print("\tCompressing block " + str(write_block_index))
                     compressed_data = lzss().Lzss_Compress(uncompressed_data)
                 elif rom_block["compression_type"] == BLOCK_COMPRESSION_TYPE.DEFLATE:
                     compressed_data = zlib.compress(uncompressed_data, 9)
