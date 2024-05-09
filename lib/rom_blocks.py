@@ -442,23 +442,19 @@ class rom_blocks():
                 end_block_size = (file_size - end_block_offset)
                 end_reserve_size = 0x00
 
-                if build_info != None and build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
-                    # This should always calculate to 0x4000 so we don't overwrite the NVRAM
-                    # I'm doing this calculation just in case there's some odd build that reserves less or more of 0x4000
+                if build_info != None and build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOX:
+                    # This should always at least be 0x4000 so we don't overwrite the NVRAM
+                    # I'm doing this calculation just in case there's some odd build that reserves less than 0x4000
 
                     # Probably a 4MB ROM
-                    if build_info["romfs_offset"] > 0x200000:
-                        end_reserve_size = 0x400000 - build_info["romfs_offset"]
+                    if file_size > 0x200000:
+                        end_reserve_size = 0x400000 - file_size
                     # Probably a 2MB ROM
-                    elif build_info["romfs_offset"] > 0x100000:
-                        end_reserve_size = 0x200000 - build_info["romfs_offset"]
+                    elif file_size > 0x100000:
+                        end_reserve_size = 0x200000 - file_size
                     # Probably a mysterious 1MB ROM
                     else:
-                        end_reserve_size = 0x100000 - build_info["romfs_offset"]
-
-                    # The NVRAM is right after the ROMFS, so don't let the file size go beyond that.
-                    if file_size > build_info["romfs_offset"]:
-                        file_size = build_info["romfs_offset"]
+                        end_reserve_size = 0x100000 - file_size
                 else:
                     end_reserve_size = 0x00
 
