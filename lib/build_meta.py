@@ -133,6 +133,9 @@ class build_meta():
         if build_info["romfs_address"] >= 0 and build_info["image_type"] != IMAGE_TYPE.COMPRESSED_BOX:
             infos.append("ROMFS Address: " + hex(build_info["romfs_address"]) + " [size " + hex(build_info["romfs_size"]) + "]")
 
+        if build_info["tmpfs_address"] >= 0 and build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOX:
+            infos.append("TMPFS Address: " + hex(build_info["tmpfs_address"]) + " [size " + hex(build_info["tmpfs_size"]) + "]")
+
         if build_info["storage_table_offset"] >= 0:
             infos.append("CompressFS Table Offset: " + hex(build_info["storage_table_offset"]))
 
@@ -889,6 +892,12 @@ class build_meta():
             "romfs_end_offset": -1,
             "romfs_size": -1,
 
+            "tmpfs_address": -1,
+            "tmpfs_offset": -1,
+            "tmpfs_end_address": -1,
+            "tmpfs_end_offset": -1,
+            "tmpfs_size": -1,
+
             "storage_table_offset": -1,
             "wince_romhdr_address": -1,
             "wince_romhdr_offset": -1,
@@ -1089,6 +1098,25 @@ class build_meta():
             if build_info["romfs_offset"] != -1 and build_info["romfs_offset"] <= file_size:
                 # This is useful for bootrom images.
                 build_info["memory_romfs_address"] = build_meta.read32bit(f, "big", (build_info["romfs_offset"] - 0x78)) + 0xB0
+
+            if detected_image_type == IMAGE_TYPE.ORIG_CLASSIC_BOX:
+                flash_size = 0x200000
+                nvram_size = 0x4000
+
+                if build_info["romfs_offset"] > 0x200000:
+                    flash_size = 0x400000
+                elif build_info["romfs_offset"] > 0x100000:
+                    flash_size = 0x200000
+                else:
+                    flash_size = 0x100000
+
+
+                build_info["tmpfs_offset"] = flash_size - nvram_size
+                build_info["tmpfs_address"] = build_info["build_address"] + build_info["tmpfs_offset"]
+                build_info["tmpfs_size"] = build_meta.read32bit(f, "big", build_info["tmpfs_offset"] - 0x08, build_info["start_offset"]) << 2
+                build_info["memory_tmpfs_address"] = build_meta.read32bit(f, "big", (build_info["tmpfs_offset"] - 0x78)) + 0xB0
+                build_info["tmpfs_end_address"] = build_info["tmpfs_address"] - 8 - (build_info["tmpfs_size"] * 4)
+                build_info["tmpfs_end_offset"] = build_info["tmpfs_offset"] - 8 - (build_info["tmpfs_size"] * 4)
 
             if detected_image_type == IMAGE_TYPE.ULTIMATETV_BOX:
                 build_info["storage_table_offset"] = build_info["build_size"]

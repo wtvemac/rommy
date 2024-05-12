@@ -13,7 +13,7 @@ from lib.autodisk import *
 import shutil
 
 class romfs_explode():
-    def read_node(f, build_info, address, read_data = True):
+    def read_node(f, build_info, address, read_data = True, data_prefix = "romfs"):
         position = build_meta.romfs_position(build_info, address)
 
         f.seek(position)
@@ -103,12 +103,12 @@ class romfs_explode():
 
         return {
             "address": address,
-            "address_calculated": (build_info["memory_romfs_address"] - (build_info["romfs_offset"] - build_meta.romfs_position(build_info, address))),
+            "address_calculated": (build_info["memory_" + data_prefix + "_address"] - (build_info[data_prefix + "_offset"] - build_meta.romfs_position(build_info, address))),
             "position": position,
             "type": file_type,
             "next_link": file_info[0],
             "parent": file_info[1],
-            "parent_calculated": (build_info["memory_romfs_address"] - (build_info["romfs_offset"] - build_meta.romfs_position(build_info, file_info[1]))),
+            "parent_calculated": (build_info["memory_" + data_prefix + "_address"] - (build_info[data_prefix + "_offset"] - build_meta.romfs_position(build_info, file_info[1]))),
             "child_list": file_info[2],
             "data_address": file_info[3],
             "data_offset": file_position,
@@ -123,11 +123,11 @@ class romfs_explode():
             "children": []
         }
 
-    def walk_romfs(f, build_info, address, parent_address, parent_calculated, is_base = False, read_data = True):
+    def walk_romfs(f, build_info, address, parent_address, parent_calculated, is_base = False, read_data = True, data_prefix = "romfs"):
         items = []
 
         while address != 0:
-            file_info = romfs_explode.read_node(f, build_info, address, read_data)
+            file_info = romfs_explode.read_node(f, build_info, address, read_data, data_prefix)
 
             if file_info == None:
                 break
@@ -136,7 +136,7 @@ class romfs_explode():
                 items.append(file_info)
 
                 if file_info["child_list"] != 0:
-                    file_info["children"] = romfs_explode.walk_romfs(f, build_info, file_info["child_list"], address, file_info["address_calculated"], False, read_data)
+                    file_info["children"] = romfs_explode.walk_romfs(f, build_info, file_info["child_list"], address, file_info["address_calculated"], False, read_data, data_prefix)
 
             if is_base:
                 address = 0
@@ -145,7 +145,7 @@ class romfs_explode():
 
         return items
 
-    def extract_selected_romfs(build_info, silent = False, read_data = True):
+    def extract_selected_romfs(build_info, silent = False, read_data = True, data_prefix = "romfs"):
         allowable_level1_types = [
             IMAGE_TYPE.VIEWER_SCRAMBLED,
             IMAGE_TYPE.COMPRESSED_BOX,
@@ -162,7 +162,7 @@ class romfs_explode():
         ]
 
         if build_info["image_type"] in allowable_types:
-            return romfs_explode.get_nodes(build_info, read_data)
+            return romfs_explode.get_nodes(build_info, read_data, data_prefix)
         else:
             if not silent:
                 if build_info["image_type"] in allowable_level1_types:
@@ -173,7 +173,7 @@ class romfs_explode():
             return None
 
 
-    def process_romfs(build_info, silent = False, read_data = True, level1_file = None):
+    def process_romfs(build_info, silent = False, read_data = True, level1_file = None, data_prefix = "romfs"):
         allowable_level1_types = [
             IMAGE_TYPE.VIEWER_SCRAMBLED,
             IMAGE_TYPE.COMPRESSED_BOX,
@@ -217,23 +217,23 @@ class romfs_explode():
                         os.remove(secondart_build_info["path"])
                         secondart_build_info["path"] = level1_file
 
-                    return romfs_explode.extract_selected_romfs(secondart_build_info, silent, read_data), secondart_build_info
+                    return romfs_explode.extract_selected_romfs(secondart_build_info, silent, read_data, data_prefix), secondart_build_info
             elif build_info["image_type"] == IMAGE_TYPE.UNKNOWN:
                 if not silent:
                     print("Nothing I can do...")
 
             return None, None
         else:
-            return romfs_explode.extract_selected_romfs(build_info, silent, read_data), build_info
+            return romfs_explode.extract_selected_romfs(build_info, silent, read_data, data_prefix), build_info
 
 
-    def get_nodes(build_info, read_data = True):
+    def get_nodes(build_info, read_data = True, data_prefix = "romfs"):
         romfs_nodes = []
 
         with open(build_info["path"], "rb") as f:
-            address = (build_info["romfs_address"] - (0x38 + 0x08))
+            address = (build_info[data_prefix + "_address"] - (0x38 + 0x08))
 
-            romfs_nodes = romfs_explode.walk_romfs(f, build_info, address, 0x00000000, 0x00000000, True, read_data)
+            romfs_nodes = romfs_explode.walk_romfs(f, build_info, address, 0x00000000, 0x00000000, True, read_data, data_prefix)
             f.close()
 
         return romfs_nodes
@@ -278,6 +278,11 @@ class romfs_explode():
         romfs_nodes, _ = romfs_explode.process_romfs(build_info, silent, read_data, None)
         if romfs_nodes != None:
             romfs_explode.walk_nodes("level0", romfs_nodes, build_info, callback)
+
+        if build_info["tmpfs_offset"] > 0:
+            tmpfs_nodes, level1_build_info = romfs_explode.process_romfs(build_info, silent, read_data, None, "tmpfs")
+            if tmpfs_nodes != None:
+                romfs_explode.walk_nodes("tmp", tmpfs_nodes, level1_build_info, callback)
 
         if level1_file != None:
             romfs_nodes, level1_build_info = romfs_explode.process_romfs(build_info, silent, read_data, level1_file)
@@ -359,6 +364,9 @@ class romfs_explode():
             "origin": origin,
             "level0_build_info": {},
             "level0_romfs_objects": {},
+            "tmp_file": origin,
+            "tmp_build_info": {},
+            "tmp_romfs_objects": {},
             "level1_file": level1_file,
             "level1_build_info": {},
             "level1_romfs_objects": {},
