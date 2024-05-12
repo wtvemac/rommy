@@ -457,7 +457,7 @@ def fixcs(in_path):
 
     code_size = int.from_bytes(bytes(build_blob[0x10:0x14]), "big") << 2
     if len(build_blob) >= code_size:
-        current_checksum = int.from_bytes(bytes(build_blob[0x08:0x0c]))
+        current_checksum = int.from_bytes(bytes(build_blob[0x08:0x0c]), "big")
 
         build_blob[0x08:0x0c] = bytearray(0x04)
         calculated_checksum = build_meta.chunked_checksum(build_blob[0x00:code_size])
@@ -876,7 +876,7 @@ def process_file_to_file(in_path, template_path, level1_path, out_path, out_file
         if tmp_dump_path != None and os.path.isdir(tmp_dump_path):
             shutil.rmtree(tmp_dump_path)
 
-def process(in_path, template_file, out_path, out_file_type = None, silent = False, no_matryoshka = False, no_autodisk = False, no_data_section = False, no_romfs = False, no_nk = False, no_nk_registry = False, no_template = False, level1_path = None, level0_data_path = None, level1_data_path = None, level1_lzj_version = None, autodisk_path = None, is_rom_blocks = False, is_build_folder = True, rom_block_size = None, rom_block_address_base = None, rom_block_header_version = None, rom_block_compression_type = None, rom_block_signature_type = None, rom_block_message = ""):
+def process(in_path, template_file, out_path, out_file_type = None, silent = False, no_matryoshka = False, no_autodisk = False, no_data_section = False, no_romfs = False, no_nk = False, no_nk_registry = False, no_template = False, level1_path = None, level0_data_path = None, level1_data_path = None, level1_lzj_version = None, autodisk_path = None, is_rom_blocks = False, is_build_folder = True, rom_block_size = None, rom_block_address_base = None, rom_block_header_version = None, rom_block_compression_type = None, rom_block_signature_type = None, rom_block_message = "", block_file_prefix = ""):
     in_type = PATH_TYPE.NULL_PATH_OBJCT
     if os.path.isdir(in_path):
         in_type = PATH_TYPE.UNPACKED_FOLDER
@@ -984,7 +984,7 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
             else:
                 message_templates = []
 
-            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_size, address_base, header_version, compression_type, signature_type, message_templates, build_info)
+            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_file_prefix, block_size, address_base, header_version, compression_type, signature_type, message_templates, build_info)
         else:
             process_file_to_folder(in_path, template_path, level1_path, out_path, silent, no_matryoshka, no_autodisk, no_data_section, no_romfs, no_nk, no_nk_registry, no_template)
     elif in_type == PATH_TYPE.UNPACKED_FOLDER and out_type == PATH_TYPE.PACKED_ROM_FILE:
@@ -1105,6 +1105,9 @@ def main():
     ap.add_argument('--rom-block-message', type=str,
                     help="Specify the ROM upgrade block message template. Either text or in a file path. You can have a different message per block on each line of a file. If the block index goes beyond the lines of the file, we will use the last line repeately. A message can't be more than 32 characters long. Replacements: {index}=block index, {total}=total # of blocks, {recv_data_size}=data sent, {total_data_size}=total data size, {current_block_size}=current block size, {name}=block file name")
 
+    ap.add_argument('--rom-block-prefix', type=str,
+                    help="Specify the prefix you'd like to prepend to the filename of the outputted ROM Blocks", default="")
+
     ap.add_argument('--out-type', '-t', type=str,
                     help="Specify an output image time. Only used if the output is a file and not a folder. If this is not used we will use the dt.json file, template file or file name to determine the output type. Allowed types: " + ", ".join(allowed_output_types))
 
@@ -1197,7 +1200,7 @@ def main():
             else:
                 level1_lzj_version = LZJ_VERSION[_level1_lzj_version]
 
-        process(arg.IN_PATH, arg.template_image_file, arg.OUT_PATH, out_type, silent, arg.no_matryoshka, arg.no_autodisk, arg.no_data_section, arg.no_romfs, arg.no_nk, arg.no_nk_registry, arg.no_template, arg.level1_path, arg.level0_data_path, arg.level1_data_path, level1_lzj_version, arg.autodisk_path, arg.rom_blocks, is_build_folder, arg.rom_block_size, arg.rom_block_address_base, rom_block_header_version, rom_block_compression_type, rom_block_signature_type, arg.rom_block_message)
+        process(arg.IN_PATH, arg.template_image_file, arg.OUT_PATH, out_type, silent, arg.no_matryoshka, arg.no_autodisk, arg.no_data_section, arg.no_romfs, arg.no_nk, arg.no_nk_registry, arg.no_template, arg.level1_path, arg.level0_data_path, arg.level1_data_path, level1_lzj_version, arg.autodisk_path, arg.rom_blocks, is_build_folder, arg.rom_block_size, arg.rom_block_address_base, rom_block_header_version, rom_block_compression_type, rom_block_signature_type, arg.rom_block_message, arg.rom_block_prefix)
     elif arg.IN_PATH != None:
         if arg.fixcs:
             fixcs(arg.IN_PATH)

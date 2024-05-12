@@ -544,11 +544,12 @@ class build_meta():
 
                 if padding_size < 0 and build_info["romfs_address"] > 0:
                     if not silent:
-                        print("\t!! ROMFS ADDRESS EXTENDS BEYOND SOURCE.  I WILL EXTEND. THIS LIKELY WONT WORK! Expected ROMFS address=" + hex(build_info["romfs_address"]) + " found ROMFS address=" + hex((build_info["build_address"] + unpadded_size)) + ", difference=" + hex(padding_size))
+                        print("\t!! ROMFS ADDRESS EXTENDS BEYOND SOURCE.  I WILL EXTEND. THIS LIKELY WONT WORK! Expected ROMFS address=" + hex(build_info["romfs_address"]) + " found ROMFS address=" + hex((build_info["build_address"] + unpadded_size)) + ", difference=" + hex(-padding_size) +" ("+str(-padding_size)+" bytes) too large")
 
                     padding_size = 0
                     build_info["romfs_address"] = build_info["build_address"] + unpadded_size
                 elif romfs_blob != None and len(romfs_blob) >= 0x08:
+                    print("\t** Free space in ROMFS: "+hex(padding_size)+" ("+str(padding_size)+" bytes)")
                     romfs_padding = b'eMac' * max((math.ceil(padding_size >> 2) + 1), 1)
                     romfs_padding = romfs_padding[0:padding_size]
                 else:
