@@ -564,7 +564,8 @@ class build_meta():
                     if build_info["flash_size"] > 0 and build_info["flash_size"] > build_info["flash_nvram_size"]:
                         tmpfs_offset = build_info["flash_size"] - build_info["flash_nvram_size"]
                         tmpfs_size = len(tmpfs_blob)
-                        max_tmpfs_size = tmpfs_offset - (unpadded_size + padding_size + 0x08)
+                        flash_romfs_offset = (unpadded_size + padding_size + 0x08)
+                        max_tmpfs_size = tmpfs_offset - flash_romfs_offset
                         tmpfs_padding_size = max_tmpfs_size - tmpfs_size
 
                         if tmpfs_padding_size < 0:
@@ -572,20 +573,18 @@ class build_meta():
                                 print("\t!! TMPFS SIZE TOO LARGE. SCRAPING TMPFS! tmpfs size=" + hex(tmpfs_size) + " (" + str(tmpfs_size) + " bytes), max size=" + hex(max_tmpfs_size) + " (" + str(max_tmpfs_size) + " bytes), difference=" + hex(tmpfs_padding_size) +" (" + str(tmpfs_padding_size) + " bytes) too large")
                         else:
                             if not silent:
-                                print("\tCalculating TMPFS params (size and checksum).")
+                                print("\tCalculating TMPFS params (size and checksum, next address)).")
 
                             _tmpfs_size = tmpfs_size - 0x08
 
+                            struct.pack_into(
+                                endian + "I",
+                                tmpfs_blob,
+                                (_tmpfs_size - 0x38),
+                                build_info["build_address"] + (flash_romfs_offset - 0x40)
+                            )
+
                             dword_tmpfs_size = ctypes.c_uint32(int(_tmpfs_size >> 2)).value
-
-                            if len(tmpfs_blob) >= 0x38 and len(next_romfs) != 0:
-                                next_link_offset = (_tmpfs_size - 0x38)
-
-                                tmpfs_blob[next_link_offset+0] = next_romfs[0]
-                                tmpfs_blob[next_link_offset+1] = next_romfs[1]
-                                tmpfs_blob[next_link_offset+2] = next_romfs[2]
-                                tmpfs_blob[next_link_offset+3] = next_romfs[3]
-                                
                             romfs_checksum = build_meta.checksum(tmpfs_blob[0x00:_tmpfs_size])
                             struct.pack_into(
                                 endian + "II",
