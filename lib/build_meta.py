@@ -328,19 +328,24 @@ class build_meta():
 
             return out_path
 
-    def get_file_data(path, start_offset = 0, read_size = 0):
+    def get_data(f, start_offset = 0, read_size = 0):
         data = b''
 
-        with open(path, 'rb') as f:
-            f.seek(0, os.SEEK_END)
-            data_size = f.tell()
+        f.seek(0, os.SEEK_END)
+        data_size = f.tell()
 
-            f.seek(start_offset)
-            data = f.read((data_size - start_offset) if read_size == 0 else read_size)
+        f.seek(start_offset)
+        data = f.read((data_size - start_offset) if read_size == 0 else read_size)
+
+        return bytearray(data)
+
+    def get_file_data(path, start_offset = 0, read_size = 0):
+        with open(path, 'rb') as f:
+            data = build_meta.get_data(f, start_offset, read_size)
 
             f.close()
 
-        return bytearray(data)
+        return data
 
     def write_object_file(build_info, data, silent = False):
         with open(build_info["out_path"], 'wb') as f:

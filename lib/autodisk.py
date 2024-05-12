@@ -10,7 +10,7 @@ from lib.build_meta import *
     All integers are big endian.
 
     Bytes 0x00-0x04[uint32]: Autodisk File Database Index/Metadata Magic [0x39592841]
-    Bytes 0x04-0x08[uint32]: Index/Metadata CRC?
+    Bytes 0x04-0x08[uint32]: Index/Metadata CRC
     Bytes 0x08-0x0c[uint32]: ??? version?
     Bytes 0x0c-0x10[uint32]: ??? version?
     Bytes 0x10-0x14[uint32]: Size in bytes of the file DB index/metadata section needs to be 0x10000 or less
@@ -194,7 +194,7 @@ class autodisk():
                 filemeta_blob,
                 0x00,
                 AUTODISK_FILEM_BGN_MAGIC,
-                0x00, # TODO: Unknown how to calculate CRC
+                0x00, # Metadata CRC, calculated later
                 0x01,
                 0x01,
                 filemeta_blob_size,
@@ -234,6 +234,15 @@ class autodisk():
                 AUTODISK_FILEM_END_MAGIC
             )
 
+            metadata_crc = build_meta.crc32(filemeta_blob[0x08:])
+
+            struct.pack_into(
+                endian + "I",
+                filemeta_blob,
+                0x04,
+                metadata_crc
+            )
+
             return (filemeta_blob + filedata_blob + bytearray(autodisk_alignment_size))
 
         if not silent:
@@ -271,7 +280,7 @@ class autodisk():
 
         return autodisk_blob
 
-    def is_proper(f, build_info):
+    def is_proper(f, build_info, silent = False):
         AUTODISK_FILEM_BGN_MAGIC = 0x39592841
         AUTODISK_FILEM_END_MAGIC = 0x11993456
         CRC_OFFSET = 8
@@ -279,7 +288,7 @@ class autodisk():
         metadata_begin_magic = build_meta.read32bit(f, "big", build_info["autodisk_offset"])
 
         if metadata_begin_magic == AUTODISK_FILEM_BGN_MAGIC:
-            metadata_crc = build_meta.read32bit(f, "big", build_info["autodisk_offset"] + 0x04)
+            metadata_found_crc = build_meta.read32bit(f, "big", build_info["autodisk_offset"] + 0x04)
             metadata_size = build_meta.read32bit(f, "big", build_info["autodisk_offset"] + 0x10)
             build_info["autodisk_file_count"] = build_meta.read32bit(f, "big", build_info["autodisk_offset"] + 0x14)
             
@@ -289,11 +298,22 @@ class autodisk():
                 metadata_end_magic = build_meta.read32bit(f, "big",  build_info["autodisk_filedata_offset"] - 4)
 
                 if metadata_end_magic == AUTODISK_FILEM_END_MAGIC:
-                    # TODO: Check CRC if known here..
+                    metadata_calculated_crc = build_meta.crc32(build_meta.get_data(f, build_info["autodisk_offset"] + 0x08, metadata_size - 0x08))
+
+                    if metadata_calculated_crc != metadata_found_crc:
+                        if not silent:
+                            print("\tWARNING: the autodisk metadata checksum doesn't match! found=" + hex(metadata_found_crc) + ", calculated=" + hex(metadata_calculated_crc))
 
                     return True
                 else:
-                    print("FAIL", hex(metadata_end_magic))
+                    if not silent:
+                        print("\tERROR: bad ROM autodisk metadata block. Magic doesn't match. found=" + hex(metadata_end_magic) + ", expected=" + hex(AUTODISK_FILEM_END_MAGIC))
+            else:
+                if not silent:
+                    print("\tERROR: bad ROM autodisk metadata block. Bad metadata size or file count. size=" + hex(metadata_size) + ", file count=" + hex(build_info["autodisk_file_count"]))
+        else:
+            if not silent:
+                print("\tERROR: bad ROM autodisk metadata block. Header magic doesn't match. found=" + hex(metadata_begin_magic) + ", expected=" + hex(AUTODISK_FILEM_BGN_MAGIC))
 
         return False
 
@@ -302,7 +322,7 @@ class autodisk():
             build_info = build_meta.detect(origin)
 
             with open(build_info["path"], "rb") as f:
-                if autodisk.is_proper(f, build_info):
+                if autodisk.is_proper(f, build_info, silent):
 
                     for i in range(0, build_info["autodisk_file_count"]):
                         f.seek(build_info["autodisk_offset"] + 0x18 + (0x14 * i))
