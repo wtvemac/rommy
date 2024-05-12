@@ -26,7 +26,7 @@ class romfs_explode():
             else:
                 file_info = struct.unpack_from(">IIIIIII28s", bytes(f.read(0x38)))
         except:
-            print("WARNING: stopping. Can't read address @" + hex(address) + " (resolves to position " + hex(position) + " in the file)")
+            print("\tWARNING: stopping. Can't read address @" + hex(address) + " (resolves to position " + hex(position) + " in the file)")
             return None
 
         file_type = OBJECT_TYPE.UNKNOWN
@@ -46,7 +46,7 @@ class romfs_explode():
         data = b''
         datap1 = b''
 
-        file_position = build_meta.romfs_position(build_info, file_info[3])
+        file_position = build_meta.romfs_position(build_info, file_info[3], data_prefix)
 
         data_size = file_info[4]
         compression_type = FILE_COMPRESSION.UNKNOWN
@@ -277,16 +277,22 @@ class romfs_explode():
 
         romfs_nodes, _ = romfs_explode.process_romfs(build_info, silent, read_data, None)
         if romfs_nodes != None:
+            if not silent:
+                print("\tExtracting level0 ROMFS")
             romfs_explode.walk_nodes("level0", romfs_nodes, build_info, callback)
 
         if build_info["tmpfs_offset"] > 0:
             tmpfs_nodes, level1_build_info = romfs_explode.process_romfs(build_info, silent, read_data, None, "tmpfs")
             if tmpfs_nodes != None:
+                if not silent:
+                    print("\tExtracting level0 TMPFS")
                 romfs_explode.walk_nodes("tmp", tmpfs_nodes, level1_build_info, callback)
 
         if level1_file != None:
             romfs_nodes, level1_build_info = romfs_explode.process_romfs(build_info, silent, read_data, level1_file)
             if romfs_nodes != None:
+                if not silent:
+                    print("\tExtracting level1 ROMFS")
                 romfs_explode.walk_nodes("level1", romfs_nodes, level1_build_info, callback)
 
     def list(origin, simplify_sizes = False, level1_file = None):

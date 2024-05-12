@@ -631,6 +631,7 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
     ]
 
     level0_romfs_folders = []
+    tmp_romfs_folders = []
     level1_romfs_folders = []
     unknown_romfs_folders = []
     if os.path.isdir(in_path + "/level0-romfs"):
@@ -638,6 +639,9 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
 
     if os.path.isdir(in_path + "/level0-compressfs"):
         level0_romfs_folders.append(in_path + "/level0-compressfs")
+
+    if os.path.isdir(in_path + "/tmp-romfs"):
+        tmp_romfs_folders.append(in_path + "/tmp-romfs")
 
     if os.path.isdir(in_path + "/level1-romfs"):
         level1_romfs_folders.append(in_path + "/level1-romfs")
@@ -722,7 +726,7 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
     if out_file_type == IMAGE_TYPE.ULTIMATETV_BOX:
         utv_tools.pack(in_path, out_path, template_path, silent, level0_build_info, True, no_romfs, no_nk, no_nk_registry)
     elif not out_file_type in box_types:
-        romfs_implode.pack(in_path, level0_romfs_folders + level1_romfs_folders + unknown_romfs_folders, template_path, out_path, out_file_type, "", None, b'', b'', silent, level0_build_info, "level0", True, no_romfs, False)
+        romfs_implode.pack(in_path, level0_romfs_folders + tmp_romfs_folders + level1_romfs_folders + unknown_romfs_folders, [], template_path, out_path, out_file_type, "", None, b'', b'', silent, level0_build_info, "level0", True, no_romfs, False)
     else:
         if template_path != None:
             level0_build_info = build_meta.detect(template_path)
@@ -810,7 +814,7 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
             # LZJ is better than any ROMFS compression so leave it uncompressed and let LZJ do its thing
             disable_romfs_compression = (out_file_type == IMAGE_TYPE.COMPRESSED_BOOTROM and "bootrom_level1_compression" in level0_build_info and level0_build_info["bootrom_level1_compression"] == FILE_COMPRESSION.LZJV1)
 
-            romfs_implode.pack(in_path, _romfs_folders, level1_path, built_level1_path, level1_build_info["image_type"], "", None, level1_data, cb_level0_audodisk_data, silent, level1_build_info, "level1", True, no_romfs, disable_romfs_compression)
+            romfs_implode.pack(in_path, _romfs_folders, [], level1_path, built_level1_path, level1_build_info["image_type"], "", None, level1_data, cb_level0_audodisk_data, silent, level1_build_info, "level1", True, no_romfs, disable_romfs_compression)
 
         level0_data = b''
         if not no_data_section:
@@ -839,6 +843,11 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
             if autodisk_path != None and os.path.isdir(autodisk_path):
                 audodisk_data = autodisk.build_image([autodisk_path], level0_build_info, silent, dt)
 
+        if len(tmp_romfs_folders) > 0:
+            if out_file_type != IMAGE_TYPE.ORIG_CLASSIC_BOX:
+                tmp_romfs_folders = []
+                level0_romfs_folders += tmp_romfs_folders
+
         if not silent:
             print("Creating level0 image.")
 
@@ -849,7 +858,7 @@ def process_folder_to_file(in_path, template_path, level1_path, out_path, out_fi
             elif len(unknown_romfs_folders) > 0:
                 _romfs_folders = [unknown_romfs_folders.pop()]
                 
-        romfs_implode.pack(in_path, _romfs_folders, template_path, out_path, out_file_type, built_level1_path, level1_lzj_version, level0_data, audodisk_data, silent, level0_build_info, "level0", True, no_romfs, False)
+        romfs_implode.pack(in_path, _romfs_folders, tmp_romfs_folders, template_path, out_path, out_file_type, built_level1_path, level1_lzj_version, level0_data, audodisk_data, silent, level0_build_info, "level0", True, no_romfs, False)
 
         if built_level1_path != None and os.path.isfile(built_level1_path) and template_path != built_level1_path:
             os.remove(built_level1_path)
@@ -865,7 +874,7 @@ def process_file_to_file(in_path, template_path, level1_path, out_path, out_file
 
         level0_build_info["image_type"] = IMAGE_TYPE.COMPRESSED_BOX
 
-        romfs_implode.pack(in_path, [], template_path, out_path, IMAGE_TYPE.COMPRESSED_BOX, in_path, level1_lzj_version, b'', b'', silent, level0_build_info, "level0", True, no_romfs, False)
+        romfs_implode.pack(in_path, [], [], template_path, out_path, IMAGE_TYPE.COMPRESSED_BOX, in_path, level1_lzj_version, b'', b'', silent, level0_build_info, "level0", True, no_romfs, False)
     else:
         tmp_dump_path = tempfile.mktemp()
 

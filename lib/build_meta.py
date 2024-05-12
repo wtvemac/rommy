@@ -33,6 +33,7 @@ from lib.tea import *
     Bytes 0x38-0x3c[uint32]: Compressed .data section size. The builds eventually started compressing the .data section with LZSS.
     Bytes 0x3c-0x40[uint32]: Compressed bootrom build address. The LC2 started compressing the bootrom build. The size is seems to be where it starts up until the end of the checksummed data (use the code size to find this).
 
+    - Original classic boxes have a second ROMFS image called 'TMPFS' that's 0x4000 bytes before the end of the flash, padded with 0's between the main ROM and the end of the TMPFS.
     - LC2 uses LZSS to compress the bootrom. BPS, LC2.5 and UTV use LZJ1.
     - In LZJ compressed bootroms, the size of the decompressed data is stored as a uint32 at the start of the compressed data.
     - In LC2 builds, the autodisk file table is at the end of the build. You can use the build size to find that.
@@ -387,7 +388,7 @@ class build_meta():
         return image_type in box_types
 
 
-    def build_blob(build_info, endian, romfs_blob, data_blob = b'', autodisk_blob = b'', level1_build_blob = b'', level1_lzj_version = None, silent = False):
+    def build_blob(build_info, endian, romfs_blob, data_blob = b'', autodisk_blob = b'', level1_build_blob = b'', level1_lzj_version = None, tmpfs_blob = b'', silent = False):
         AUTODISK_FILEM_BGN_MAGIC = 0x39592841
         AUTODISK_FILEM_END_MAGIC = 0x11993456
         build_info["romfs_address"] -= 8
@@ -547,16 +548,62 @@ class build_meta():
 
                 if padding_size < 0 and build_info["romfs_address"] > 0:
                     if not silent:
-                        print("\t!! ROMFS ADDRESS EXTENDS BEYOND SOURCE.  I WILL EXTEND. THIS LIKELY WONT WORK! Expected ROMFS address=" + hex(build_info["romfs_address"]) + " found ROMFS address=" + hex((build_info["build_address"] + unpadded_size)) + ", difference=" + hex(-padding_size) +" ("+str(-padding_size)+" bytes) too large")
+                        print("\t!! ROMFS ADDRESS EXTENDS BEYOND SOURCE. I WILL EXTEND. THIS LIKELY WONT WORK! Expected ROMFS address=" + hex(build_info["romfs_address"]) + " found ROMFS address=" + hex((build_info["build_address"] + unpadded_size)) + ", difference=" + hex(-padding_size) +" (" + str(-padding_size) + " bytes) too large")
 
                     padding_size = 0
                     build_info["romfs_address"] = build_info["build_address"] + unpadded_size
                 elif romfs_blob != None and len(romfs_blob) >= 0x08:
-                    print("\t** Free space in ROMFS: "+hex(padding_size)+" ("+str(padding_size)+" bytes)")
+                    if not silent:
+                        print("\t** Free space in ROMFS: " + hex(padding_size) + " (" + str(padding_size) + " bytes)")
                     romfs_padding = b'eMac' * max((math.ceil(padding_size >> 2) + 1), 1)
                     romfs_padding = romfs_padding[0:padding_size]
                 else:
                     romfs_padding = b''
+
+                if build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOX and tmpfs_blob != None and len(tmpfs_blob) > 0:
+                    if build_info["flash_size"] > 0 and build_info["flash_size"] > build_info["flash_nvram_size"]:
+                        tmpfs_offset = build_info["flash_size"] - build_info["flash_nvram_size"]
+                        tmpfs_size = len(tmpfs_blob)
+                        max_tmpfs_size = tmpfs_offset - (unpadded_size + padding_size + 0x08)
+                        tmpfs_padding_size = max_tmpfs_size - tmpfs_size
+
+                        if tmpfs_padding_size < 0:
+                            if not silent:
+                                print("\t!! TMPFS SIZE TOO LARGE. SCRAPING TMPFS! tmpfs size=" + hex(tmpfs_size) + " (" + str(tmpfs_size) + " bytes), max size=" + hex(max_tmpfs_size) + " (" + str(max_tmpfs_size) + " bytes), difference=" + hex(tmpfs_padding_size) +" (" + str(tmpfs_padding_size) + " bytes) too large")
+                        else:
+                            if not silent:
+                                print("\tCalculating TMPFS params (size and checksum).")
+
+                            _tmpfs_size = tmpfs_size - 0x08
+
+                            dword_tmpfs_size = ctypes.c_uint32(int(_tmpfs_size >> 2)).value
+
+                            if len(tmpfs_blob) >= 0x38 and len(next_romfs) != 0:
+                                next_link_offset = (_tmpfs_size - 0x38)
+
+                                tmpfs_blob[next_link_offset+0] = next_romfs[0]
+                                tmpfs_blob[next_link_offset+1] = next_romfs[1]
+                                tmpfs_blob[next_link_offset+2] = next_romfs[2]
+                                tmpfs_blob[next_link_offset+3] = next_romfs[3]
+                                
+                            romfs_checksum = build_meta.checksum(tmpfs_blob[0x00:_tmpfs_size])
+                            struct.pack_into(
+                                endian + "II",
+                                tmpfs_blob,
+                                _tmpfs_size,
+                                dword_tmpfs_size,
+                                romfs_checksum
+                            )
+
+                            footer_blob = b'\x00\x00\x00\x00' * max((math.ceil(tmpfs_padding_size >> 2) + 1), 1)
+                            footer_blob = footer_blob[0:tmpfs_padding_size]
+                            footer_blob += tmpfs_blob
+
+                            if not silent:
+                                print("\t** Free space in TMPFS: " + hex(tmpfs_padding_size) + " (" + str(tmpfs_padding_size) + " bytes)")
+                    else:
+                        if not silent:
+                            print("\t!! CAN'T FIND FLASH SIZE OR THE NVRAM SIZE IS LARGER THAN FLASH SIZE! SCRAPPING TMPFS!")
             else:
                 if not silent:
                     print("\t!! CAN'T USE SOURCE BUILD! UNABLE TO DETECT FORMAT!")
@@ -663,9 +710,9 @@ class build_meta():
 
         return code_blob + compressed_level1_build_blob + romfs_padding + romfs_blob + footer_blob
 
-    def romfs_address(build_info, position):
-        base_address = build_info["romfs_address"]
-        romfs_offset = build_info["romfs_offset"]
+    def romfs_address(build_info, position, data_prefix = "romfs"):
+        base_address = build_info[data_prefix + "_address"]
+        romfs_offset = build_info[data_prefix + "_offset"]
 
         if base_address <= -1:
             base_address = 0xffffffff
@@ -680,13 +727,13 @@ class build_meta():
         
         return address & 0xffffffff
 
-    def romfs_position(build_info, address):
-        base_address = build_info["romfs_address"]
+    def romfs_position(build_info, address, data_prefix = "romfs"):
+        base_address = build_info[data_prefix + "_address"]
 
-        if ((base_address - address) - 0x08) > build_info["romfs_offset"] and build_info["memory_romfs_address"] > 0:
-            base_address = build_info["memory_romfs_address"]
+        if ((base_address - address) - 0x08) > build_info[data_prefix + "_offset"] and build_info["memory_" + data_prefix + "_address"] > 0:
+            base_address = build_info["memory_" + data_prefix + "_address"]
 
-        position = build_info["romfs_offset"] - ((base_address - address) - 0x08)
+        position = build_info[data_prefix + "_offset"] - ((base_address - address) - 0x08)
 
         if build_info["image_type"] == IMAGE_TYPE.BOX or build_info["image_type"] == IMAGE_TYPE.COMPRESSED_BOOTROM or build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOX or build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
             position -= 0x08
@@ -891,6 +938,9 @@ class build_meta():
             "romfs_end_address": -1,
             "romfs_end_offset": -1,
             "romfs_size": -1,
+
+            "flash_size": -1,
+            "flash_nvram_size": -1,
 
             "tmpfs_address": -1,
             "tmpfs_offset": -1,
@@ -1100,23 +1150,28 @@ class build_meta():
                 build_info["memory_romfs_address"] = build_meta.read32bit(f, "big", (build_info["romfs_offset"] - 0x78)) + 0xB0
 
             if detected_image_type == IMAGE_TYPE.ORIG_CLASSIC_BOX:
-                flash_size = 0x200000
-                nvram_size = 0x4000
+                build_info["flash_size"] = 0x200000
+                build_info["flash_nvram_size"] = 0x4000
 
                 if build_info["romfs_offset"] > 0x200000:
-                    flash_size = 0x400000
+                    build_info["flash_size"] = 0x400000
                 elif build_info["romfs_offset"] > 0x100000:
-                    flash_size = 0x200000
+                    build_info["flash_size"] = 0x200000
                 else:
-                    flash_size = 0x100000
+                    build_info["flash_size"] = 0x100000
 
+                romfs_signature = b'\x52\x4F\x4D\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
-                build_info["tmpfs_offset"] = flash_size - nvram_size
-                build_info["tmpfs_address"] = build_info["build_address"] + build_info["tmpfs_offset"]
-                build_info["tmpfs_size"] = build_meta.read32bit(f, "big", build_info["tmpfs_offset"] - 0x08, build_info["start_offset"]) << 2
-                build_info["memory_tmpfs_address"] = build_meta.read32bit(f, "big", (build_info["tmpfs_offset"] - 0x78)) + 0xB0
-                build_info["tmpfs_end_address"] = build_info["tmpfs_address"] - 8 - (build_info["tmpfs_size"] * 4)
-                build_info["tmpfs_end_offset"] = build_info["tmpfs_offset"] - 8 - (build_info["tmpfs_size"] * 4)
+                f.seek(build_info["start_offset"] + (build_info["flash_size"] - build_info["flash_nvram_size"]) - 0x24)
+                test_signature = bytes(f.read(len(romfs_signature)))
+
+                if romfs_signature == test_signature:
+                    build_info["tmpfs_offset"] = build_info["flash_size"] - build_info["flash_nvram_size"]
+                    build_info["tmpfs_address"] = build_info["build_address"] + build_info["tmpfs_offset"]
+                    build_info["tmpfs_size"] = build_meta.read32bit(f, "big", build_info["tmpfs_offset"] - 0x08, build_info["start_offset"]) << 2
+                    build_info["memory_tmpfs_address"] = build_meta.read32bit(f, "big", (build_info["tmpfs_offset"] - 0x78)) + 0xB0
+                    build_info["tmpfs_end_address"] = build_info["tmpfs_address"] - 8 - (build_info["tmpfs_size"] * 4)
+                    build_info["tmpfs_end_offset"] = build_info["tmpfs_offset"] - 8 - (build_info["tmpfs_size"] * 4)
 
             if detected_image_type == IMAGE_TYPE.ULTIMATETV_BOX:
                 build_info["storage_table_offset"] = build_info["build_size"]

@@ -13,7 +13,7 @@ from lib.build_meta import *
 from lib.autodisk import *
 
 class romfs_implode():
-    def build_romfs(directory_paths, build_info, build_level = "level0", final_level1_path = None, level1_lzj_version = None, data_blob = b'', autodisk_blob = b'', silent = False, descriptor_table = None, disable_romfs_build = False, disable_romfs_compression = False):
+    def build_romfs(directory_paths, build_info, build_level = "level0", final_level1_path = None, level1_lzj_version = None, data_blob = b'', autodisk_blob = b'', tmpfs_blob = b'', romfs_data_prefix = "romfs", silent = False, descriptor_table = None, disable_romfs_build = False, disable_romfs_compression = False):
         object_count = 0
         files_blob_size = 0
         romfs_blob = b''
@@ -23,7 +23,7 @@ class romfs_implode():
         romfs_nodes = []
 
         if not silent and not disable_romfs_build:
-            print("\tBuilding romfs")
+            print("\tBuilding " + romfs_data_prefix)
 
         endian = ""
         if build_info["image_type"] == IMAGE_TYPE.DREAMCAST:
@@ -37,7 +37,7 @@ class romfs_implode():
         else:
             box_build = False
 
-        def _build_romfs(romfs_nodes, parent_address = 0):
+        def _build_romfs(romfs_nodes, parent_address = 0, romfs_data_prefix = "romfs"):
             nonlocal endian, romfs_blob, files_blob_offset, object_table_offset, silent
 
             if romfs_nodes == None or len(romfs_nodes) == 0:
@@ -47,7 +47,7 @@ class romfs_implode():
             previous_table_offset = -1
 
             if parent_address > 0:
-                parent_address = build_meta.romfs_address(build_info, parent_address)
+                parent_address = build_meta.romfs_address(build_info, parent_address, romfs_data_prefix)
 
             for romfs_node in romfs_nodes:
                 object_table_offset -= 0x38
@@ -58,10 +58,10 @@ class romfs_implode():
                 if romfs_node["type"] == OBJECT_TYPE.DIRECTORY:
                     data_offset = 0
 
-                    _child_list_offset = _build_romfs(romfs_node["children"], object_table_offset)
+                    _child_list_offset = _build_romfs(romfs_node["children"], object_table_offset, romfs_data_prefix)
 
                     if _child_list_offset != 0:
-                        child_list_offset = build_meta.romfs_address(build_info, _child_list_offset)
+                        child_list_offset = build_meta.romfs_address(build_info, _child_list_offset, romfs_data_prefix)
                 else:
                     child_list_offset = 0
                     _data_offset = files_blob_offset - romfs_node["aligned_size"]
@@ -69,14 +69,14 @@ class romfs_implode():
                     romfs_blob[_data_offset:files_blob_offset] = romfs_node["data"]
                     files_blob_offset -= romfs_node["aligned_size"]
                     
-                    data_offset = build_meta.romfs_address(build_info, _data_offset)
+                    data_offset = build_meta.romfs_address(build_info, _data_offset, romfs_data_prefix)
 
                 if previous_table_offset >= 0:
                     struct.pack_into(
                         endian + "I",
                         romfs_blob,
                         previous_table_offset,
-                        build_meta.romfs_address(build_info, current_table_offset)
+                        build_meta.romfs_address(build_info, current_table_offset, romfs_data_prefix)
                     )
 
                 size_param = romfs_node["data_size"]
@@ -391,25 +391,27 @@ class romfs_implode():
             object_table_offset = romfs_size
             extra_alloc_bytes = 0
 
-            build_info["romfs_offset"] = object_table_offset
+            build_info[romfs_data_prefix + "_offset"] = object_table_offset
 
             if build_info["image_type"] == IMAGE_TYPE.DREAMCAST:
-                build_info["romfs_address"] = object_table_offset + 0x98
+                build_info[romfs_data_prefix + "_address"] = object_table_offset + 0x98
             elif box_build:
                 extra_alloc_bytes = 8
-            elif build_info["romfs_address"] <= 0 or build_info["romfs_address"] == 0xffffffff:
-                build_info["romfs_address"] = 0x80800000
-            else:
-                if romfs_size > build_info["romfs_address"]:
-                    build_info["romfs_address"] = romfs_size + 0x98
+            elif build_info[romfs_data_prefix + "_address"] <= 0 or build_info["romfs_address"] == 0xffffffff:
+                build_info[romfs_data_prefix + "_address"] = 0x80800000
+            elif romfs_size > build_info[romfs_data_prefix + "_address"]:
+                build_info[romfs_data_prefix + "_address"] = romfs_size + 0x98
 
             romfs_blob = bytearray(romfs_size + extra_alloc_bytes)
-            _build_romfs(romfs_nodes)
+            _build_romfs(romfs_nodes, 0, romfs_data_prefix)
 
             if not silent:
-                print("\tDone building ROMFS.")
+                if romfs_data_prefix == "tmpfs":
+                    print("\tDone building TMPFS.")
+                else:
+                    print("\tDone building ROMFS.")
 
-        if box_build:
+        if box_build and romfs_data_prefix != "tmpfs":
             if not silent:
                 print("\tRebulding ROM file.")
 
@@ -435,11 +437,11 @@ class romfs_implode():
             if romfs_blob == None or len(romfs_blob) == 0 and "source_build_path" in build_info and "romfs_offset" in build_info and "romfs_size" in build_info and build_info["romfs_size"] > 0 and build_info["romfs_offset"] > 0 and build_info["image_type"] != IMAGE_TYPE.COMPRESSED_BOX:
                 romfs_blob = build_meta.get_file_data(build_info["source_build_path"], (build_info["romfs_offset"] - build_info["romfs_size"]), build_info["romfs_size"])
                 
-            return build_meta.build_blob(build_info, endian, romfs_blob, data_blob, autodisk_blob, level1_build_blob, level1_lzj_version, silent)
+            return build_meta.build_blob(build_info, endian, romfs_blob, data_blob, autodisk_blob, level1_build_blob, level1_lzj_version, tmpfs_blob, silent)
         else:
             return romfs_blob
 
-    def pack(origin, romfs_folders, source_build_path = None, out_path = None, image_type = None, final_level1_path = None, level1_lzj_version = None, data_blob = b'', autodisk_blob = b'', silent = False, build_info = None, build_level = "level0", use_descriptor_file = True, disable_romfs_build = False, disable_romfs_compression = False):
+    def pack(origin, romfs_folders, tmpfs_folders = [], source_build_path = None, out_path = None, image_type = None, final_level1_path = None, level1_lzj_version = None, data_blob = b'', autodisk_blob = b'', silent = False, build_info = None, build_level = "level0", use_descriptor_file = True, disable_romfs_build = False, disable_romfs_compression = False):
         if build_info == None and source_build_path != None:
             build_info = build_meta.detect(source_build_path)
 
@@ -474,9 +476,18 @@ class romfs_implode():
         if build_info["image_type"] == IMAGE_TYPE.COMPRESSED_BOX or len(romfs_folders) == 0:
             disable_romfs_build = True
 
+        tmpfs_blob = b''
+
+        if len(tmpfs_folders) > 0:
+            build_info["tmpfs_offset"] = build_info["flash_size"] - build_info["flash_nvram_size"]
+            build_info["tmpfs_address"] = build_info["build_address"] + build_info["tmpfs_offset"]
+            build_info["memory_tmpfs_address"] = build_info["tmpfs_address"] - 0x08
+
+            tmpfs_blob = romfs_implode.build_romfs(tmpfs_folders, build_info, build_level, final_level1_path, level1_lzj_version, data_blob, autodisk_blob, tmpfs_blob, "tmpfs", silent, descriptor_table, disable_romfs_build, disable_romfs_compression)
+
+        data = romfs_implode.build_romfs(romfs_folders, build_info, build_level, final_level1_path, level1_lzj_version, data_blob, autodisk_blob, tmpfs_blob, "romfs", silent, descriptor_table, disable_romfs_build, disable_romfs_compression)
+
         if build_info["image_type"] == IMAGE_TYPE.VIEWER_SCRAMBLED:
-            romfs_cipher.write_vwr_file(build_info, romfs_implode.build_romfs(romfs_folders, build_info, build_level, final_level1_path, level1_lzj_version, data_blob, autodisk_blob, silent, descriptor_table, disable_romfs_build, disable_romfs_compression), silent)
-        elif build_info["image_type"] == IMAGE_TYPE.BOX or build_info["image_type"] == IMAGE_TYPE.COMPRESSED_BOOTROM or build_info["image_type"] == IMAGE_TYPE.ORIG_CLASSIC_BOX:
-            build_meta.write_object_file(build_info, romfs_implode.build_romfs(romfs_folders, build_info, build_level, final_level1_path, level1_lzj_version, data_blob, autodisk_blob, silent, descriptor_table, disable_romfs_build, disable_romfs_compression), silent)
+            romfs_cipher.write_vwr_file(build_info, data, silent)
         else:
-            build_meta.write_object_file(build_info, romfs_implode.build_romfs(romfs_folders, build_info, build_level, final_level1_path, level1_lzj_version, data_blob, autodisk_blob, silent, descriptor_table, disable_romfs_build, disable_romfs_compression), silent)
+            build_meta.write_object_file(build_info, data, silent)
