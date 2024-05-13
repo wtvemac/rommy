@@ -573,7 +573,7 @@ class build_meta():
                                 print("\t!! TMPFS SIZE TOO LARGE. SCRAPING TMPFS! tmpfs size=" + hex(tmpfs_size) + " (" + str(tmpfs_size) + " bytes), max size=" + hex(max_tmpfs_size) + " (" + str(max_tmpfs_size) + " bytes), difference=" + hex(tmpfs_padding_size) +" (" + str(tmpfs_padding_size) + " bytes) too large")
                         else:
                             if not silent:
-                                print("\tCalculating TMPFS params (size and checksum, next address)).")
+                                print("\tCalculating TMPFS params (size, checksum, and next address)).")
 
                             _tmpfs_size = tmpfs_size - 0x08
 
@@ -616,7 +616,14 @@ class build_meta():
 
             if romfs_blob != None and len(romfs_blob) >= 0x08:
                 if not silent:
-                    print("\tCalculating ROMFS params (size and checksum, next address).")
+                    print("\tCalculating ROMFS params (base, size, checksum, next address).")
+
+                struct.pack_into(
+                    endian + "I",
+                    code_blob,
+                    0x24,
+                    build_info["romfs_address"] + 0x08,
+                )
 
                 dword_romfs_size = ctypes.c_uint32(int(romfs_size >> 2)).value
 
