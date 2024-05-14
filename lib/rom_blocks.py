@@ -413,7 +413,7 @@ class rom_blocks():
         else:
             print("\tNo upgrade blocks found")
 
-    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = [], build_info = None):
+    def unpack(origin, destination = "./out", silent = False, block_file_extension = ".rom", block_size = 0x10000, block_file_prefix = "", address_base = 0x00000000, header_version = BLOCK_HEADER_VERSION.VER2, compression_type = BLOCK_COMPRESSION_TYPE.BSTR, signature_type = BLOCK_SIGNATURE_TYPE.PROD, message_templates = [], build_info = None):
         ROM_BLOCK_MAGIC = 0x96031889
         check_rom_blocks = []
         write_rom_blocks = []
@@ -521,7 +521,7 @@ class rom_blocks():
                 compressed_data = bytearray(0x00)
                 uncompressed_data = bytearray(f.read(rom_block["size"]))
 
-                rom_block["name"] = "part" + ("%03d" % write_block_index) + block_file_extension
+                rom_block["name"] = block_file_prefix + "part" + ("%03d" % write_block_index) + block_file_extension
 
                 if rom_block["compression_type"] == BLOCK_COMPRESSION_TYPE.BSTR:
                     zlib_compressed_data1 = zlib.compress(uncompressed_data, 9)

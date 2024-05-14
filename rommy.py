@@ -993,7 +993,7 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
             else:
                 message_templates = []
 
-            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_file_prefix, block_size, address_base, header_version, compression_type, signature_type, message_templates, build_info)
+            rom_blocks.unpack(in_path, out_path, silent, block_file_extension, block_size, block_file_prefix, address_base, header_version, compression_type, signature_type, message_templates, build_info)
         else:
             process_file_to_folder(in_path, template_path, level1_path, out_path, silent, no_matryoshka, no_autodisk, no_data_section, no_romfs, no_nk, no_nk_registry, no_template)
     elif in_type == PATH_TYPE.UNPACKED_FOLDER and out_type == PATH_TYPE.PACKED_ROM_FILE:
