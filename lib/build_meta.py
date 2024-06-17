@@ -1059,8 +1059,10 @@ class build_meta():
                         build_info["build_flags"] = 0x00
                         if _romfs_address == 0x9fe00000:
                             build_info["build_address"] = 0x9fc00000 # Classic BootROM
+                        elif _romfs_address > 0x9fe00000:
+                            build_info["build_address"] = 0x9fe00000 # bfe Classic AppROM
                         else:
-                            build_info["build_address"] = 0x9f000000 # Classic AppROM
+                            build_info["build_address"] = 0x9f000000 # bf0 Classic AppROM
 
                     build_info["data_address"] = build_meta.read32bit(f, "big", 0x18, build_info["start_offset"])
                     build_info["data_offset"] = build_info["data_address"] - build_info["build_address"]
