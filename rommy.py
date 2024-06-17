@@ -954,7 +954,10 @@ def process(in_path, template_file, out_path, out_file_type = None, silent = Fal
                 if in_type == IMAGE_TYPE.COMPRESSED_BOOTROM or in_type == IMAGE_TYPE.ORIG_CLASSIC_BOOTROM:
                     address_base = 0xbfc00000
                 elif in_type == IMAGE_TYPE.ORIG_CLASSIC_BOX:
-                    address_base = 0xbf000000
+                    if build_info["romfs_address"] > 0xbfe00000:
+                        address_base = 0xbfe00000
+                    else:
+                        address_base = 0xbf000000
                 else:
                     address_base = 0x00000000
 

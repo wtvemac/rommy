@@ -802,6 +802,11 @@ class build_meta():
             {
                 "image_type": IMAGE_TYPE.ORIG_CLASSIC_BOX,
                 "offset": 0,
+                "signature": b'\x10\x00\x00\x08\x00\x00\x00\x00'
+            },
+            {
+                "image_type": IMAGE_TYPE.ORIG_CLASSIC_BOX,
+                "offset": 0,
                 "signature": b'\x10\x00\x00\x09\x00\x00\x00\x00'
             },
             {
