@@ -59,7 +59,7 @@ class utv_tools():
         return perl_command_prefix
 
     def load_cecompress():
-        tools_path = os.path.abspath("lib/utv-tools/")
+        tools_path = os.path.abspath(os.path.dirname(__file__) + "/utv-tools/")
 
         cdllobj = None
 
@@ -235,7 +235,7 @@ class utv_tools():
 
     def tool_nk_unpack(origin, destination, build_info, silent = False, disable_registry_dump = False, read_data = True):
         perl_command_prefix = utv_tools.get_perl_command_prefix()
-        tools_path = os.path.abspath("lib/utv-tools/")
+        tools_path = os.path.abspath(os.path.dirname(__file__) + "/utv-tools/")
 
         compressed_files = []
 
@@ -401,7 +401,7 @@ class utv_tools():
         return nk
 
     def tool_compressfs_unpack(origin, destination, build_info, silent = False, read_data = True, simplify_sizes = False):
-        tools_path = os.path.abspath("lib/utv-tools/")
+        tools_path = os.path.abspath(os.path.dirname(__file__) + "/utv-tools/")
 
         if not silent:
             print("\tDumping CompressFS images")
@@ -530,7 +530,7 @@ class utv_tools():
 
     def tool_nk_pack(origin, destination, build_info, silent = False, disable_registry_build = False):
         perl_command_prefix = utv_tools.get_perl_command_prefix()
-        tools_path = os.path.abspath("lib/utv-tools/")
+        tools_path = os.path.abspath(os.path.dirname(__file__) + "/utv-tools/")
 
         tmp_dump_path = tempfile.mktemp()
         os.makedirs(tmp_dump_path, 0o777, True)
@@ -653,7 +653,7 @@ class utv_tools():
         return nk_data
 
     def tool_compressfs_pack(origin, destination, build_info, table_offset = 0x00, silent = False):
-        tools_path = os.path.abspath("lib/utv-tools/")
+        tools_path = os.path.abspath(os.path.dirname(__file__) + "/utv-tools/")
 
         tmp_dump_path = tempfile.mktemp()
         os.makedirs(tmp_dump_path, 0o777, True)
