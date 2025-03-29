@@ -290,7 +290,8 @@ class utv_tools():
 
                     if read_data:
                         # File names can't have spaces here
-                        if matches := re.search(r"^\s*0x([a-fA-F0-9]+)\s+(\d+)\s+(\d+\-\d+\-\d+ \d+\:\d+\:\d+)\s+([a-zA-Z0-9\.\-\_]+)\s*$", line, re.IGNORECASE):
+                        matches = re.search(r"^\s*0x([a-fA-F0-9]+)\s+(\d+)\s+(\d+\-\d+\-\d+ \d+\:\d+\:\d+)\s+([a-zA-Z0-9\.\-\_]+)\s*$", line, re.IGNORECASE)
+                        if matches:
                             file = {
                                 "offset": int(matches.group(1), 16),
                                 "size": int(matches.group(2)),
@@ -305,16 +306,20 @@ class utv_tools():
                                 nk["files"].append(file)
                         elif re.search(r"^\-\-modules", line, re.IGNORECASE):
                             in_modules = True
-                        elif matches := re.search(r"compressed file data\s+([a-zA-Z0-9\.\-\_]+)\s*$", line, re.IGNORECASE):
-                            compressed_files.append(matches.group(1))
-                        elif matches := re.search(r"romhdr\s*:\s*(.+)$", line, re.IGNORECASE):
-                            header_entries = matches.group(1).split(",")
+                        else:
+                            matches = re.search(r"compressed file data\s+([a-zA-Z0-9\.\-\_]+)\s*$", line, re.IGNORECASE)
+                            if matches:
+                                compressed_files.append(matches.group(1))
+                            else:
+                                matches = re.search(r"romhdr\s*:\s*(.+)$", line, re.IGNORECASE)
+                                if matches:
+                                    header_entries = matches.group(1).split(",")
 
-                            for header_entry in header_entries:
-                                header_keyval = header_entry.strip().split(":")
+                                    for header_entry in header_entries:
+                                        header_keyval = header_entry.strip().split(":")
 
-                                if len(header_keyval) > 1:
-                                    nk["rom_header"][header_keyval[0].strip()] = int(header_keyval[1].strip(), 16)
+                                        if len(header_keyval) > 1:
+                                            nk["rom_header"][header_keyval[0].strip()] = int(header_keyval[1].strip(), 16)
 
                     if not silent:
                         print("\t\t\t" + line)

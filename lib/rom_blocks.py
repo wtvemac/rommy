@@ -160,14 +160,17 @@ class rom_blocks():
             build_type = ""
             rom_type = ""
 
-            if matches := re.search(r"^([a-zA-Z0-9\-\_]*?)(-part|part|)[0-9]+.rom$", name, re.IGNORECASE):
+            matches = re.search(r"^([a-zA-Z0-9\-\_]*?)(-part|part|)[0-9]+.rom$", name, re.IGNORECASE)
+            if matches:
                 build_type = "approm"
                 rom_type = matches.group(1)
-            elif matches := re.search(r"^([a-zA-Z0-9\-\_]*?)(-part|part|)[0-9]+.brom$", name, re.IGNORECASE):
-                build_type = "bootrom"
-                rom_type = matches.group(1)
             else:
-                continue
+                matches = re.search(r"^([a-zA-Z0-9\-\_]*?)(-part|part|)[0-9]+.brom$", name, re.IGNORECASE)
+                if matches:
+                    build_type = "bootrom"
+                    rom_type = matches.group(1)
+                else:
+                    continue
 
             block_info = rom_blocks.detect(search_dir + "/" + name, read_data, silent)
 
