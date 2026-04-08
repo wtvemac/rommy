@@ -53,6 +53,9 @@ class Msntv2SigMD5:
 
         self.print_sig_md5()
 
+        if arg.farted:
+            self.do_fart()
+
     def get_split_md5(self, md5_digest):
         return " ".join(md5_digest[i:i+4][::-1].hex().upper() for i in range(0, 16, 4))
 
